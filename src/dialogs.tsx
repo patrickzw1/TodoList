@@ -1,0 +1,147 @@
+import { Plus, X } from "@phosphor-icons/react";
+import { FormEvent, useMemo, useState } from "react";
+import type { AcceptanceCriterion, Priority, Project, Subtask, Task, TaskStatus } from "./types";
+import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
+import { reconcileAcceptanceCriteria, reconcileSubtasks } from "./task-checklists";
+
+export interface TaskEdits {
+  title: string;
+  description: string;
+  projectId: string;
+  status: TaskStatus;
+  priority: Priority;
+  dueDate: string;
+  dueLabel: string;
+  tags: string[];
+  subtasks?: Subtask[];
+  acceptanceCriteria?: AcceptanceCriterion[];
+  dependencies: string[];
+}
+
+function splitLines(value: string) {
+  return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+}
+
+function splitTags(value: string) {
+  return [...new Set(value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+export function TaskEditorDialog({ task, projects, onClose, onSave }: {
+  task: Task; projects: Project[]; onClose: () => void; onSave: (edits: TaskEdits) => void;
+}) {
+  const [initialChecklists] = useState(() => ({
+    subtasks: task.subtasks.map((item) => item.title).join("\n"),
+    acceptanceCriteria: task.acceptanceCriteria.map((item) => item.title).join("\n"),
+  }));
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [projectId, setProjectId] = useState(task.projectId);
+  const [status, setStatus] = useState<TaskStatus>(task.status);
+  const [priority, setPriority] = useState<Priority>(task.priority);
+  const [dueDate, setDueDate] = useState(task.dueDate === "9999-12-31" ? "" : task.dueDate);
+  const [tags, setTags] = useState(task.tags.join("，"));
+  const [subtasks, setSubtasks] = useState(task.subtasks.map((item) => item.title).join("\n"));
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState(task.acceptanceCriteria.map((item) => item.title).join("\n"));
+  const [dependencies, setDependencies] = useState(task.dependencies.join("\n"));
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+    const resolvedDueDate = dueDate || "9999-12-31";
+    onSave({
+      title: trimmedTitle,
+      description: description.trim(),
+      projectId,
+      status,
+      priority,
+      dueDate: resolvedDueDate,
+      dueLabel: resolvedDueDate === "9999-12-31" ? "未安排" : resolvedDueDate,
+      tags: splitTags(tags),
+      ...(subtasks !== initialChecklists.subtasks ? { subtasks: reconcileSubtasks(task.subtasks, splitLines(subtasks)) } : {}),
+      ...(acceptanceCriteria !== initialChecklists.acceptanceCriteria ? { acceptanceCriteria: reconcileAcceptanceCriteria(task.acceptanceCriteria, splitLines(acceptanceCriteria)) } : {}),
+      dependencies: splitLines(dependencies),
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="create-dialog task-editor-dialog" onSubmit={submit}>
+        <div className="dialog-heading"><h2>编辑任务</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭编辑"><X /></button></div>
+        <div className="editor-scroll auto-hide-scrollbar" {...scrollbar}>
+          <label>任务标题<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+          <label>描述<textarea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="补充任务背景或要求" /></label>
+          <div className="editor-grid">
+            <label>所属项目<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+            <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as TaskStatus)}><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="done">已完成</option></select></label>
+            <label>优先级<select value={priority} onChange={(event) => setPriority(event.target.value as Priority)}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+            <label>截止日期<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+          </div>
+          <label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="使用逗号分隔" /></label>
+          <div className="editor-grid text-lists">
+            <label>子任务<textarea rows={5} value={subtasks} onChange={(event) => setSubtasks(event.target.value)} placeholder="每行一个子任务" /></label>
+            <label>验收标准<textarea rows={5} value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} placeholder="每行一项验收标准" /></label>
+          </div>
+          <label>依赖关系<textarea rows={3} value={dependencies} onChange={(event) => setDependencies(event.target.value)} placeholder="每行一个依赖" /></label>
+        </div>
+        <div className="dialog-actions"><button type="button" onClick={onClose}>取消</button><button className="dialog-primary" type="submit" disabled={!title.trim()}>保存修改</button></div>
+      </form>
+    </div>
+  );
+}
+
+const PROJECT_COLORS = ["#1665e8", "#7c5ce7", "#269b58", "#db7b22", "#d84b6b", "#258ca6"];
+
+export function ProjectEditorDialog({ projects, project, taskCount = 0, onClose, onSave, onRequestDelete }: {
+  projects: Project[]; project?: Project; taskCount?: number; onClose: () => void; onSave: (name: string, color: string) => void; onRequestDelete?: () => void;
+}) {
+  const [name, setName] = useState(project?.name ?? "");
+  const [color, setColor] = useState(project?.color ?? PROJECT_COLORS[projects.length % PROJECT_COLORS.length]);
+  const duplicate = useMemo(() => projects.some((item) => item.id !== project?.id && item.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase()), [name, project?.id, projects]);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (name.trim() && !duplicate) onSave(name.trim(), color);
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="create-dialog project-dialog" onSubmit={submit}>
+        <div className="dialog-heading"><h2>{project ? "编辑项目" : "新建项目"}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目编辑"><X /></button></div>
+        <label>项目名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：个人网站发布" /></label>
+        <fieldset className="color-picker"><legend>项目颜色</legend><div>{PROJECT_COLORS.map((item) => <button type="button" key={item} className={color === item ? "selected" : ""} style={{ background: item }} onClick={() => setColor(item)} aria-label={`选择颜色 ${item}`} aria-pressed={color === item} />)}</div></fieldset>
+        {duplicate && <p className="dialog-error">已经存在同名项目</p>}
+        {project && taskCount > 0 && <p className="dialog-note">项目中还有 {taskCount} 个任务，移走或永久删除后才能删除项目。</p>}
+        <div className="dialog-actions">{project && onRequestDelete && <button type="button" className="danger-action push-left" disabled={taskCount > 0} onClick={onRequestDelete}>删除项目</button>}<button type="button" onClick={onClose}>取消</button><button className="dialog-primary" type="submit" disabled={!name.trim() || duplicate}>{project ? "保存项目" : <><Plus />创建项目</>}</button></div>
+      </form>
+    </div>
+  );
+}
+
+export function ConfirmDialog({ title, description, confirmLabel, onClose, onConfirm }: {
+  title: string; description: string; confirmLabel: string; onClose: () => void; onConfirm: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="create-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+        <div className="dialog-heading"><h2 id="confirm-title">{title}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭确认"><X /></button></div>
+        <p id="confirm-description">{description}</p>
+        <div className="dialog-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="danger-action" onClick={onConfirm}>{confirmLabel}</button></div>
+      </div>
+    </div>
+  );
+}
+
+export function NoticeDialog({ title, description, onClose }: {
+  title: string; description: string; onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="create-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" aria-describedby="notice-description">
+        <div className="dialog-heading"><h2 id="notice-title">{title}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭提示"><X /></button></div>
+        <p id="notice-description">{description}</p>
+        <div className="dialog-actions"><button type="button" className="dialog-primary" onClick={onClose}>知道了</button></div>
+      </div>
+    </div>
+  );
+}

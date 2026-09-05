@@ -1,0 +1,8 @@
+[mcp_servers.todolist]
+command = "node"
+args = ["scripts/start-mcp.mjs"]
+startup_timeout_sec = 30
+tool_timeout_sec = 15
+required = false
+enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "create_task", "update_task"]
+default_tools_approval_mode = "writes"

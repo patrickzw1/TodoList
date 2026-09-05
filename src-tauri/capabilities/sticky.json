@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sticky-drag",
+  "description": "Allow native titlebar dragging only in the sticky-note window",
+  "windows": ["sticky-note"],
+  "permissions": ["core:window:allow-start-dragging"]
+}

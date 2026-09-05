@@ -1,0 +1,19 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "targets": [
+      "nsis"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzNDY5QUIyQ0Q1RTM2QTcKUldTbk5sN05zcHBHVTlWSFpPbUFIQXNBeDdxYjRZK0QzUlhIQXBQb2hjak84QUpNd2NuMGVyaEwK",
+      "endpoints": [
+        "https://github.com/patrickzw1/TodoList/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

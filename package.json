@@ -1,0 +1,37 @@
+{
+  "name": "todolist",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "dev:desktop": "tauri dev",
+    "build:sidecar": "node scripts/prepare-mcp-sidecar.mjs",
+    "build:desktop": "tauri build",
+    "preview": "vite preview",
+    "test:mcp-stdio": "node scripts/mcp-stdio-smoke.mjs",
+    "test:windows": "node --experimental-strip-types --test --test-concurrency=1 tests/window-actions.test.mjs",
+    "test:app": "node --experimental-strip-types --test --test-concurrency=1 tests/task-behavior.test.mjs tests/window-actions.test.mjs tests/workspace-backup.test.mjs tests/workspace-store.test.mjs",
+    "test:sites": "node --test tests/sites-worker.test.mjs"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "2.7.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.11.0",
+    "@vitejs/plugin-react": "5.0.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "vite": "6.4.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^6.0.3"
+  }
+}

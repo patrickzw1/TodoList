@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+src-tauri/binaries/
+.DS_Store
+*.log
+*.key
+*.pem
+*.dpapi
+.env
+.env.*

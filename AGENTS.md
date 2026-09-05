@@ -1,0 +1,40 @@
+# Prototype Instructions
+
+For UI implementation or browser acceptance that needs a preview, run/reuse the project server and open it in an available browser. Pure document reviews do not require starting a server.
+
+Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
+
+When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
+
+Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+
+## TodoList product decisions
+
+- The selected visual source is `C:\Users\patrick\Downloads\ChatGPT Image Aug 31, 2026, 02_16_00 PM.png`. Treat its left navigation, grouped task list, and right task detail as the desktop layout source of truth; the interaction-explanation column is documentation, not part of the app.
+- TodoList is an independent local-first desktop app. Codex integration is optional and only reads, creates, or updates Todo data through MCP in the MVP.
+- Do not add a Start Task or Send to Codex action in the MVP.
+- A task may be pinned by the user into a compact always-on-top desktop note. Codex-created tasks must not open or pin that note automatically.
+- Pinning is a compact task-row control: unpinned is gray, pinned is blue. Do not add a large pin action to the task detail footer.
+- Subtasks can be completed independently. Completing all subtasks must not automatically complete the parent task.
+- During the early product stage, prioritize core functionality and use Tauri's free updater-package signature for update integrity. Do not purchase or require Windows Authenticode signing yet; revisit public publisher signing only if adoption justifies it.
+- Codex integration must be configured only after an explicit user action. Register the bundled MCP sidecar in the current user's `~/.codex/config.toml` and install the Skill under `~/.agents/skills/todolist-mcp`; never modify the Codex installation directory. Preserve conflicting or unowned entries instead of overwriting them.
+- Local storage keeps one current workspace snapshot. Do not append duplicate full-workspace copies for audit or history; schema migrations must preserve user-facing task data and reclaim pages used only by obsolete internal storage.
+- Desktop UI writes must reapply the user's explicit action to the latest persisted workspace after an MCP version conflict. Poll only the workspace version during idle periods and load the full snapshot only when that version changes.
+- Search filters only the active Today, In Progress, or project view. Task editing applies explicit user field values onto the latest task while preserving fields outside the edit form.
+- Acceptance criteria have independent persisted completion state, and a task cannot be completed while any criterion is unconfirmed. Archiving is reversible and clears pin state; permanent task deletion is available only from Archived with explicit confirmation. A project may be deleted only when it contains no active or archived tasks.
+- Task detail is a fixed right-side overlay at every desktop width and must not resize, reflow, or reserve space in the main workspace. Keep the detail panel's scroll and footer visually independent from the workspace footer instead of presenting it as a third grid column. Opening and closing it must animate as a right-side slide; respect reduced-motion preferences.
+- Because the floating detail can cover task-row controls, its title actions must include the same gray/blue pin toggle as the task row, placed immediately before Edit. Completion/reopen remains available in the detail footer.
+- For Node/Vite previews, reuse an existing server only after confirming its workspace and command. Exclude high-churn generated directories such as Rust `target` from file watching, retain the owned process/session id, and stop that exact server after preview unless the user explicitly asks to keep it running. Never terminate unrelated Node processes in bulk.
+- The sidebar has a separate Desktop Note entry that opens/reuses the sticky window and minimizes the main window only after the note is shown successfully. Task-row/detail pin toggles must not minimize the main window. An empty note can still be opened without pinning a task.
+- The note's title region supports native dragging, including its text and icon, with a normal arrow cursor. Its close button must remain excluded from dragging. Windows release builds of the desktop GUI must not allocate a console window; the MCP sidecar retains STDIO behavior.
+- A project color selected during project creation or editing must have visible feedback in the product UI; do not persist a color that is invisible everywhere.
+- After producing a new desktop build, always give the user a clickable absolute path to the newest `todolist-desktop.exe` so they can launch that exact build without searching build folders.
+- Board card movement must use Pointer Events rather than native HTML `draggable`, which shows a forbidden-drop cursor in the Windows WebView. Start after a small movement threshold, ignore buttons and selects as drag handles, show a floating card preview and highlighted destination column, and keep the status selector as the keyboard-accessible fallback.
+- The task-detail scrollbar must use the app's thin rounded blue-gray treatment instead of the platform's heavy default scrollbar.
+- Detail and editor scrollbars stay hidden at rest, fade in while scrolling or when the pointer approaches the right scrollbar edge, then fade out after scrolling stops.
+- Task detail shows the newest four activity entries by default and offers an inline `查看全部 / 收起` control for the retained history. Continue bounding persisted history to the newest 100 entries so activity data cannot grow indefinitely.
+- Keep the board's compact floating drag preview instead of moving a full-size card; preserving visible status columns and drop targets is more useful at the current four-column density.
+- Codex launches the MCP sidecar independently of the desktop UI so tasks can be read or written while the task board is closed. The sidecar is not a user-facing executable, and MCP writes must not automatically open the task board.
+- The sidebar includes an All view for every non-archived task, including unscheduled work. Search is visibly labeled and filters only the current task view.
+- Clicking outside the floating task-detail panel closes it through the same slide-out transition as its close button; clicks inside the panel must not dismiss it.
+- Codex integration records the last TodoList-managed MCP command beside the managed Skill. A changed install path is offered as a user-confirmed migration only when that recorded command matches, or for legacy installs when the managed marker exists and the old and current sidecar binaries are byte-identical. Migration changes only TodoList's command entry; unknown or unowned configurations remain conflicts.

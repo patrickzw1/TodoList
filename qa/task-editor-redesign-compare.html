@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>TodoList task editor redesign comparison</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 24px; color: #eef2f8; background: #15181d; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+      h1 { margin: 0 0 8px; font-size: 22px; }
+      p { margin: 0 0 20px; color: #aeb7c3; font-size: 13px; }
+      .comparison { display: flex; align-items: flex-start; gap: 20px; }
+      figure { margin: 0; }
+      figcaption { margin-bottom: 9px; font-size: 13px; font-weight: 600; }
+      .frame { overflow: hidden; border: 1px solid #353b45; border-radius: 10px; background: #fff; }
+      .before { width: 626px; height: 839px; }
+      .before img { display: block; width: 626px; height: 839px; }
+      .after { position: relative; width: 640px; height: 682px; }
+      .after img { position: absolute; left: -320px; top: -19px; width: 1280px; height: 720px; max-width: none; }
+    </style>
+  </head>
+  <body>
+    <h1>编辑任务弹窗视觉对比</h1>
+    <p>左侧为用户反馈截图，右侧为相同任务、标题输入框聚焦状态下的新版组件裁切。</p>
+    <section class="comparison">
+      <figure>
+        <figcaption>修改前 · 626 × 839</figcaption>
+        <div class="frame before"><img src="feedback-task-editor-before.png" alt="修改前编辑任务弹窗" /></div>
+      </figure>
+      <figure>
+        <figcaption>修改后 · 640 × 682（来自 1280 × 720 视口）</figcaption>
+        <div class="frame after"><img src="implementation-task-editor-redesign.png" alt="修改后编辑任务弹窗" /></div>
+      </figure>
+    </section>
+  </body>
+</html>

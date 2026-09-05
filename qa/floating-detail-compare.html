@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>TodoList floating detail comparison</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 24px; color: #eef2f8; background: #15181d; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+      h1 { margin: 0 0 20px; font-size: 22px; }
+      h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+      .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+      .frame { overflow: hidden; border: 1px solid #353b45; border-radius: 10px; background: #fff; }
+      .frame img { display: block; width: 100%; height: auto; }
+      .focus-frame { position: relative; width: 624px; height: 821px; }
+      .focus-frame.implementation { width: 620px; height: 820px; }
+      .focus-frame.implementation img { position: absolute; left: -329px; top: -20px; width: 1280px; max-width: none; }
+    </style>
+  </head>
+  <body>
+    <h1>TodoList 视觉对比</h1>
+    <h2>悬浮详情：左侧用户参考，右侧实现</h2>
+    <section class="comparison">
+      <div class="frame"><img src="feedback-floating-detail-reference.png" alt="用户悬浮详情参考" /></div>
+      <div class="frame"><img src="implementation-floating-detail-1019.png" alt="悬浮详情实现" /></div>
+    </section>
+    <h2>编辑弹窗焦点：左侧用户参考，右侧实现裁切</h2>
+    <section class="comparison">
+      <div class="frame focus-frame"><img src="feedback-edit-focus-reference.png" alt="用户焦点边框参考" /></div>
+      <div class="frame focus-frame implementation"><img src="implementation-edit-dialog-focus.png" alt="焦点边框实现" /></div>
+    </section>
+  </body>
+</html>

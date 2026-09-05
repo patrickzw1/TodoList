@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "src-tauri",
+  "crates/task-core",
+  "crates/task-store-sqlite",
+  "crates/todolist-mcp",
+]
+resolver = "2"

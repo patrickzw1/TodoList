@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "backup-dialog",
+  "description": "Allow the main TodoList window to select backup import and export files",
+  "windows": ["main"],
+  "permissions": [
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

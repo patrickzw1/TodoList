@@ -1,0 +1,15 @@
+interface:
+  display_name: "TodoList MCP"
+  short_description: "Safely synchronize local TodoList tasks with Codex"
+  brand_color: "#1264F4"
+  default_prompt: "Use $todolist-mcp to save this plan into my local TodoList project."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "todolist"
+      description: "Local TodoList read, create, and update tools"
+      transport: "stdio"
+
+policy:
+  allow_implicit_invocation: true

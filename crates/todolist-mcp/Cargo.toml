@@ -1,0 +1,18 @@
+[package]
+name = "todolist-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "Local stdio MCP server for TodoList"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+dirs = "6"
+rmcp = { version = "3", features = ["server", "macros", "schemars", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+task-core = { path = "../task-core" }
+task-store-sqlite = { path = "../task-store-sqlite" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v4"] }

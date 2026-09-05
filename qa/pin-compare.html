@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pin control comparison</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 32px; color: #20242a; background: #eef1f5; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      h1 { margin: 0 0 24px; font-size: 22px; }
+      .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+      figure { margin: 0; padding: 18px; border: 1px solid #d9dde4; border-radius: 12px; background: white; box-shadow: 0 8px 26px rgba(32, 42, 56, .08); }
+      figcaption { margin-bottom: 12px; font-size: 14px; font-weight: 650; }
+      .reference img { display: block; width: 515px; max-width: 100%; height: auto; border: 1px solid #e3e6eb; }
+      .implementation { position: relative; width: 515px; max-width: 100%; height: 190px; overflow: hidden; border: 1px solid #e3e6eb; }
+      .implementation img { position: absolute; width: 1237px; height: 1272px; max-width: none; transform: translate(-274px, -123px); transform-origin: top left; }
+      p { margin: 20px 0 0; color: #5d6673; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <h1>任务行置顶交互对比</h1>
+    <div class="comparison">
+      <figure>
+        <figcaption>用户标注目标</figcaption>
+        <div class="reference"><img src="./pin-reference.png" alt="用户标注的任务行图钉参考" /></div>
+      </figure>
+      <figure>
+        <figcaption>当前实现</figcaption>
+        <div class="implementation"><img src="./implementation-pin-main.png" alt="当前任务行图钉实现" /></div>
+      </figure>
+    </div>
+    <p>未置顶图钉为灰色；已置顶图钉为蓝色。详情底部不再出现大号置顶按钮。</p>
+  </body>
+</html>
