@@ -15,7 +15,7 @@ Downgrades are disabled by the app. Windows uses the updater's passive installer
 
 The public repository is `patrickzw1/TodoList`. Windows release builds merge
 `src-tauri/tauri.release.conf.json`, which contains the public verification key and
-the GitHub `latest.json` endpoint. It contains no private signing material.
+the GitHub `latest.json` endpoint. It also restores the production application identifier/name and enables the `production` feature for both the desktop and sidecar. It contains no private signing material. Ordinary local builds use the independent development database even when compiled with release optimizations.
 
 On the release maintainer's Windows machine, run:
 
@@ -27,6 +27,10 @@ This builds the signed NSIS installer in `target/package-build/release/bundle/ns
 and creates its signature, `latest.json`, and `SHA256SUMS.txt`. Upload these four
 files to the matching `v<version>` GitHub release. A normal release is required
 for GitHub's `/releases/latest` endpoint; prereleases do not become that endpoint.
+
+The signing build remaps the maintainer's checkout and user-directory paths in Rust output and uses a neutral Windows debug-record path. This keeps personal build paths out of the distributed executables. Do not upload PDBs, databases, managed user files, or internal design-session records with a release.
+
+Keep production outputs out of `target/development`: the sidecar preparation script refuses that destination for production builds. The signing script selects `target/package-build` automatically. For an unsigned local production build check, set `CARGO_TARGET_DIR` to `target/package-build` and run `npm run build:desktop -- --no-bundle --config src-tauri/tauri.release.conf.json`.
 
 The encrypted private key is outside the repository under
 `%LOCALAPPDATA%\TodoListRelease\signing\updater.key`; its random password is stored

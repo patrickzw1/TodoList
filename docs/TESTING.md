@@ -1,5 +1,30 @@
 # MVP verification and remaining work
 
+## v0.2.0 release review — 2026-09-06
+
+- 42 Rust tests, 41 frontend tests, 3 build-channel checks, and 4 Sites checks passed, along with TypeScript and the production frontend build. Store and MCP tests were also run with the explicit production feature against temporary databases.
+- Additional regressions cover atomic attachment import, stale-save rejection, queued cleanup after restart, re-referenced file preservation, pending restore/import preservation, unsafe storage keys, and incomplete/corrupt backup payloads.
+- Browser review confirmed a new origin starts with zero tasks; three-image import and side navigation work; the central image opens the viewer; Tab stays inside the viewer; Escape closes it; two selected tasks can be archived; the archived view has select-all and a counted permanent-delete confirmation. No browser console errors were recorded. The owned preview processes were stopped afterward.
+- MCP initialization and tool descriptions document file metadata and desktop-only file management. Existing MCP tools remain unchanged; task updates preserve both file collections. The managed Skill can be upgraded from the installed app's integration page.
+- The review did not install over the user's daily app or modify its database. Native file associations and installer upgrade behavior still depend on the target Windows environment. JSON backups retain the documented 25 MB limit.
+
+## Attachments, empty initialization, project deletion and list selection — 2026-09-06
+
+- New desktop workspaces persist `{ projects: [], tasks: [] }`; MCP opens the same empty database without adding examples. Browser examples require the explicit `?demo=1` query. Existing SQLite and browser workspaces are loaded unchanged and legacy tasks normalize missing attachment/image arrays.
+- Managed-file tests use temporary roots and verify copy-with-original-preserved, reference-based cleanup, base64 backup payloads, restore under new keys, and unchanged existing files. No daily database or user attachment directory is used.
+- Workspace tests cover both project-delete branches, active plus archived task movement, stable-id batch replay, concurrent unarchive protection, filtered selection reconciliation, and attachment/image preservation through MCP updates.
+- Browser acceptance covered four-attachment collapse/expand, extension-preserving rows, three-layer image navigation, viewer arrow/Escape behavior, scoped select-all after search, batch archive, batch-delete confirmation, and project task counts. The owned Vite server was stopped and its port verified free; no browser warnings or errors were recorded.
+
+## Development / production isolation — 2026-09-06
+
+- Local desktop builds and the project `todolist_dev` MCP use the independent `app.todolist.desktop.dev` database. Production keeps the existing `app.todolist.desktop` path. The existing user database was preserved and its SHA-256 stayed unchanged during verification.
+- 36 Rust tests passed, including separate-store write isolation and rejection of development commands that attempt global integration changes. The 8 store tests also passed with the explicit `production` feature.
+- 35 frontend tests, TypeScript, 3 build-channel/launcher checks, the frontend build, and 4 Sites tests passed. The launcher checks reject legacy executable fallback and prevent production sidecars from overwriting the development output directory.
+- Both optimized MCP binaries printed their expected default storage paths without opening a database. Each also passed STDIO initialization and six-tool schema smoke checks using its own temporary database.
+- Development and explicit production desktop builds both completed with `--no-bundle`; neither was installed or published. The newest development executable is `target/development/release/todolist-desktop.exe`.
+- Browser acceptance used a temporary fixture with mocked development IPC: the integration card showed `todolist_dev`, its configuration button was disabled, and no warning/error console entries appeared. This verifies rendering; it does not replace native Windows UI or installer acceptance. The fixture, browser tab, and owned Vite server were removed/stopped afterward.
+- The previous owned global `todolist` entry pointing to a legacy development binary was backed up and removed. Other user configuration and the managed Skill were preserved. Register the installed app through its integration page, then restart Codex to replace already-running legacy MCP processes.
+
 ## Window lifecycle and local backup — 2026-09-04
 
 Implemented behavior:

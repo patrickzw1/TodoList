@@ -1,35 +1,20 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
+const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const executableName = process.platform === "win32" ? "todolist-mcp.exe" : "todolist-mcp";
-const candidates = [
-  process.env.TODOLIST_MCP_EXECUTABLE,
-  join(process.cwd(), "target", "debug", executableName),
-  join(process.cwd(), "target", "release", executableName),
-].filter(Boolean);
-
-let command;
-let args = [];
-for (const candidate of candidates) {
-  try {
-    await access(candidate);
-    command = candidate;
-    break;
-  } catch {
-    // Continue to the next local build candidate.
-  }
+const command = join(projectRoot, "target", "development", "release", executableName);
+try {
+  await access(command);
+} catch {
+  console.error("Development MCP is missing. Run npm run build:sidecar in the TodoList source project first.");
+  process.exit(1);
 }
 
-if (!command) {
-  const cargoName = process.platform === "win32" ? "cargo.exe" : "cargo";
-  command = join(homedir(), ".cargo", "bin", cargoName);
-  args = ["run", "--quiet", "-p", "todolist-mcp", "--"];
-}
-
-const server = spawn(command, args, {
-  cwd: process.cwd(),
+const server = spawn(command, [], {
+  cwd: projectRoot,
   env: process.env,
   stdio: "inherit",
 });

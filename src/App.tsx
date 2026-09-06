@@ -2,22 +2,28 @@ import {
   Archive, ArrowCounterClockwise, ArrowUp, CaretDown, CheckCircle, Circle, Columns, Folder, Gear, LinkSimple,
   List, LockKey, MagnifyingGlass, PencilSimple, Play, Plus, PushPin, PushPinSlash, Sun, Trash, X,
 } from "@phosphor-icons/react";
+import { isTauri, invoke } from "@tauri-apps/api/core";
 import { FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Task, TaskStatus, Workspace } from "./types";
 import { CodexIntegrationCard, readCodexIntegrationStatus, type CodexIntegrationStatus } from "./CodexIntegrationCard";
 import { DataBackupCard } from "./DataBackupCard";
+import { TaskFileSections } from "./TaskFiles";
 import { SoftwareUpdateCard } from "./SoftwareUpdateCard";
 import { isOverdue, localIsoDate, taskDueLabel, todayHeading } from "./date-utils";
 import { activityItemsForDetail, formatActivityTime, taskWithUserActivity } from "./task-activity";
 import { resolveDefaultProjectId } from "./task-creation";
 import { searchTasks, tasksForView, type TaskListView } from "./task-filtering";
-import { ConfirmDialog, NoticeDialog, ProjectEditorDialog, TaskEditorDialog, type TaskEdits } from "./dialogs";
+import { ConfirmDialog, NoticeDialog, ProjectDeletionDialog, ProjectEditorDialog, TaskEditorDialog, type TaskEdits } from "./dialogs";
 import { closeCurrentWindow, openMainWindow, openStickyWindow } from "./window-actions";
 import { useWorkspace, type StorageState } from "./workspace-store";
-import { importedWorkspaceForSave } from "./workspace-backup";
+import { importedWorkspaceForSave, remapManagedFileStorageKeys, type WorkspaceBackup } from "./workspace-backup";
 import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
 import { validateTaskCompletion } from "./task-validation";
 import { checklistEditsOnLatest } from "./task-checklists";
+import {
+  addManagedFile, archiveTasksById, deleteArchivedTasksById, deleteProjectWithTasks, moveProjectTasks,
+  moveProjectTasksToNewProject, reconcileSelectedTaskIds, removeManagedFile,
+} from "./workspace-actions";
 
 type View =
   | TaskListView
@@ -27,6 +33,7 @@ type View =
 type PendingDeletion =
   | { kind: "task"; taskId: string }
   | { kind: "project"; projectId: string }
+  | { kind: "batch"; taskIds: string[] }
   | null;
 
 const statusLabel: Record<TaskStatus, string> = {
@@ -75,15 +82,17 @@ function Sidebar({ projects, view, version, storageState, storageMessage, integr
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const integrationCopy = integrationError
     ? { state: "error", label: "Codex 集成状态读取失败" }
-    : integrationStatus?.state === "configured"
-      ? { state: "configured", label: "Codex 集成已配置" }
-      : integrationStatus?.state === "partial"
-        ? { state: "partial", label: "Codex 集成待修复" }
-        : integrationStatus?.state === "conflict"
-          ? { state: "conflict", label: "Codex 集成存在冲突" }
-          : integrationStatus
-            ? { state: "not-configured", label: integrationStatus.canConfigure ? "Codex 集成未配置" : "网页预览 · 集成不可用" }
-            : { state: "checking", label: "正在检查 Codex 集成" };
+    : integrationStatus?.state === "development"
+      ? { state: "development", label: "开发 MCP · todolist_dev" }
+      : integrationStatus?.state === "configured"
+        ? { state: "configured", label: "Codex 集成已配置" }
+        : integrationStatus?.state === "partial"
+          ? { state: "partial", label: "Codex 集成待修复" }
+          : integrationStatus?.state === "conflict"
+            ? { state: "conflict", label: "Codex 集成存在冲突" }
+            : integrationStatus
+              ? { state: "not-configured", label: integrationStatus.canConfigure ? "Codex 集成未配置" : "网页预览 · 集成不可用" }
+              : { state: "checking", label: "正在检查 Codex 集成" };
   return (
     <aside className="sidebar">
       <div className="brand"><CheckCircle weight="bold" /><span>任务台</span></div>
@@ -115,12 +124,13 @@ function Sidebar({ projects, view, version, storageState, storageMessage, integr
   );
 }
 
-function TaskRow({ task, project, selected, onSelect, onToggle, onTogglePin }: {
-  task: Task; project: Project; selected: boolean; onSelect: () => void; onToggle: () => void; onTogglePin: () => void;
+function TaskRow({ task, project, selected, multiSelected, onSelect, onToggle, onTogglePin, onMultiSelect }: {
+  task: Task; project: Project; selected: boolean; multiSelected: boolean; onSelect: () => void; onToggle: () => void; onTogglePin: () => void; onMultiSelect: () => void;
 }) {
   const dueLabel = taskDueLabel(task.dueDate, task.dueLabel);
   return (
-    <div className={`task-row ${selected ? "selected" : ""}`} role="button" tabIndex={0} onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(); }}>
+    <div className={`task-row ${selected ? "selected" : ""} ${multiSelected ? "multi-selected" : ""}`} role="button" tabIndex={0} onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(); }}>
+      <input className="task-multi-checkbox" type="checkbox" checked={multiSelected} onClick={(event) => event.stopPropagation()} onChange={onMultiSelect} aria-label={`选择任务 ${task.title}`} />
       <StatusButton task={task} onToggle={onToggle} />
       <span className="task-title">{task.title}</span>
       <button
@@ -138,11 +148,15 @@ function TaskRow({ task, project, selected, onSelect, onToggle, onTogglePin }: {
   );
 }
 
-function ListView({ projects, tasks, selectedTaskId, onSelect, onToggle, onTogglePin }: {
-  projects: Project[]; tasks: Task[]; selectedTaskId: string | null; onSelect: (id: string) => void; onToggle: (id: string) => void; onTogglePin: (id: string) => void;
+function ListView({ projects, tasks, selectedTaskId, selectedTaskIds, onSelect, onToggle, onTogglePin, onMultiSelect, onSelectAll }: {
+  projects: Project[]; tasks: Task[]; selectedTaskId: string | null; selectedTaskIds: Set<string>; onSelect: (id: string) => void; onToggle: (id: string) => void; onTogglePin: (id: string) => void; onMultiSelect: (id: string) => void; onSelectAll: (selected: boolean) => void;
 }) {
+  const selectAll = useRef<HTMLInputElement>(null);
+  const selectedVisible = tasks.filter((task) => selectedTaskIds.has(task.id)).length;
+  const allSelected = tasks.length > 0 && selectedVisible === tasks.length;
+  useEffect(() => { if (selectAll.current) selectAll.current.indeterminate = selectedVisible > 0 && !allSelected; }, [allSelected, selectedVisible]);
   return (
-    <div className="task-groups">
+    <div className="task-groups"><label className="list-select-all"><input ref={selectAll} type="checkbox" checked={allSelected} onChange={(event) => onSelectAll(event.target.checked)} /><span>{selectedVisible ? `已选择当前结果中的 ${selectedVisible} 项` : "选择当前视图"}</span></label>
       {projects.map((project) => {
         const projectTasks = tasks.filter((task) => task.projectId === project.id);
         if (!projectTasks.length) return null;
@@ -151,7 +165,7 @@ function ListView({ projects, tasks, selectedTaskId, onSelect, onToggle, onToggl
             <h2><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name}<span>{projectTasks.length}</span></h2>
             <div className="task-table">
               {projectTasks.map((task) => (
-                <TaskRow key={task.id} task={task} project={project} selected={selectedTaskId === task.id} onSelect={() => onSelect(task.id)} onToggle={() => onToggle(task.id)} onTogglePin={() => onTogglePin(task.id)} />
+                <TaskRow key={task.id} task={task} project={project} selected={selectedTaskId === task.id} multiSelected={selectedTaskIds.has(task.id)} onSelect={() => onSelect(task.id)} onToggle={() => onToggle(task.id)} onTogglePin={() => onTogglePin(task.id)} onMultiSelect={() => onMultiSelect(task.id)} />
               ))}
             </div>
           </section>
@@ -225,8 +239,8 @@ function BoardView({ projects, tasks, onSelect, onToggle, onStatusChange }: {
   );
 }
 
-function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, onTogglePin, onSubtask, onAcceptanceCriterion, onArchive, onDelete }: {
-  task: Task; project: Project; tasks: Task[]; closing: boolean; onClose: () => void; onEdit: () => void; onToggle: () => void; onTogglePin: () => void; onSubtask: (id: string) => void; onAcceptanceCriterion: (id: string) => void; onArchive: () => void; onDelete: () => void;
+function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, onTogglePin, onSubtask, onAcceptanceCriterion, onArchive, onDelete, onAddFile, onRemoveFile }: {
+  task: Task; project: Project; tasks: Task[]; closing: boolean; onClose: () => void; onEdit: () => void; onToggle: () => void; onTogglePin: () => void; onSubtask: (id: string) => void; onAcceptanceCriterion: (id: string) => void; onArchive: () => void; onDelete: () => void; onAddFile: (kind: "attachments" | "images", file: Task["attachments"][number]) => void; onRemoveFile: (kind: "attachments" | "images", fileId: string) => void;
 }) {
   const completedSubtasks = task.subtasks.filter((item) => item.completed).length;
   const [activityExpanded, setActivityExpanded] = useState(false);
@@ -244,7 +258,11 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
         <div><dt>来源</dt><dd>{task.source}</dd></div>
         <div><dt>标签</dt><dd className="tags">{task.tags.map((tag) => <span key={tag}>{tag}</span>)}</dd></div>
       </dl>
-      {task.description && <p className="task-description">{task.description}</p>}
+      <section className="detail-section description-section">
+        <h3>描述</h3>
+        {task.description ? <p className="task-description">{task.description}</p> : <p className="empty-detail">暂无描述</p>}
+      </section>
+      <TaskFileSections taskId={task.id} attachments={task.attachments} images={task.images} onAdd={onAddFile} onRemove={onRemoveFile} />
       <section className="detail-section">
         <h3>子任务 <span>{completedSubtasks}/{task.subtasks.length}</span></h3>
         {task.subtasks.length ? task.subtasks.map((subtask) => (
@@ -292,7 +310,7 @@ function IntegrationView({ onStatusChange }: { onStatusChange: (status: CodexInt
   );
 }
 
-function SettingsView({ workspace, onImport }: { workspace: Workspace; onImport: (workspace: Workspace) => void }) {
+function SettingsView({ workspace, onImport }: { workspace: Workspace; onImport: (backup: WorkspaceBackup) => Promise<void> }) {
   return <div className="settings-page"><div className="settings-icon"><Gear /></div><h1>设置</h1><p>桌面便签默认始终置顶，但只会在你主动置顶任务后出现。</p><div className="settings-card"><div><strong>便签窗口</strong><span>不由 Codex 自动打开</span></div><span className="quiet-badge">推荐</span></div><DataBackupCard workspace={workspace} onImport={onImport} /><SoftwareUpdateCard /></div>;
 }
 
@@ -319,7 +337,8 @@ function MainApp() {
   const currentDate = useCurrentDate();
   const today = localIsoDate(currentDate);
   const [view, setView] = useState<View>({ kind: "today" });
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>("preflight");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => new Set());
   const [detailClosing, setDetailClosing] = useState(false);
   const detailCloseTimer = useRef<number | null>(null);
   const [display, setDisplay] = useState<"list" | "board">("list");
@@ -396,11 +415,16 @@ function MainApp() {
     () => searchTasks(scopedTasks, workspace.projects, searchQuery),
     [scopedTasks, searchQuery, workspace.projects],
   );
+  const visibleTaskKey = visibleTasks.map((task) => task.id).join("\u0000");
+  useEffect(() => {
+    setSelectedTaskIds((current) => reconcileSelectedTaskIds(current, visibleTasks.map((task) => task.id)));
+  }, [visibleTaskKey]);
 
   const selectedTask = workspace.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedProject = selectedTask ? workspace.projects.find((project) => project.id === selectedTask.projectId) ?? null : null;
   const editingTask = workspace.tasks.find((task) => task.id === editingTaskId) ?? null;
   const editingProject = workspace.projects.find((project) => project.id === editingProjectId) ?? null;
+  const deletingProject = pendingDeletion?.kind === "project" ? workspace.projects.find((project) => project.id === pendingDeletion.projectId) ?? null : null;
   const updateTask = (taskId: string, action: string, patch: Partial<Task>) => commit((current) => nextWorkspace(current, current.tasks.map((task) => task.id === taskId ? taskWithUserActivity(task, action, patch) : task)));
   const toggleTask = (taskId: string) => {
     const task = workspace.tasks.find((item) => item.id === taskId);
@@ -460,13 +484,14 @@ function MainApp() {
     clearSelectedTask();
   };
   const deleteTask = (taskId: string) => {
-    commit((current) => nextWorkspace(current, current.tasks.filter((task) => task.id !== taskId)));
+    commit((current) => deleteArchivedTasksById(current, [taskId]));
     clearSelectedTask();
+    setSelectedTaskIds((current) => { const next = new Set(current); next.delete(taskId); return next; });
     setPendingDeletion(null);
   };
   const createTask = (title: string, projectId: string) => {
     const task: Task = {
-      id: crypto.randomUUID(), projectId, title, description: "", status: "todo", priority: "medium", dueLabel: "今天", dueDate: today, tags: [], source: "手动创建", archived: false, pinned: false, version: 1, subtasks: [], acceptanceCriteria: [], dependencies: [],
+      id: crypto.randomUUID(), projectId, title, description: "", status: "todo", priority: "medium", dueLabel: "今天", dueDate: today, tags: [], source: "手动创建", archived: false, pinned: false, version: 1, subtasks: [], acceptanceCriteria: [], attachments: [], images: [], dependencies: [],
       activity: [{ id: crypto.randomUUID(), action: "创建任务", actor: "user", at: new Date().toISOString() }],
     };
     commit((current) => nextWorkspace(current, [...current.tasks, task]));
@@ -485,11 +510,25 @@ function MainApp() {
     commit((current) => ({ ...current, version: current.version + 1, projects: current.projects.map((project) => project.id === projectId ? { ...project, name, color } : project) }));
     setEditingProjectId(null);
   };
-  const deleteProject = (projectId: string) => {
-    commit((current) => ({ ...current, version: current.version + 1, projects: current.projects.filter((project) => project.id !== projectId) }));
+  const finishProjectDeletion = (projectId: string) => {
     if (view.kind === "project" && view.projectId === projectId) setView({ kind: "today" });
     setEditingProjectId(null);
     setPendingDeletion(null);
+    setSelectedTaskIds(new Set());
+    clearSelectedTask();
+  };
+  const moveTasksAndDeleteProject = (projectId: string, targetProjectId: string) => {
+    commit((current) => moveProjectTasks(current, projectId, targetProjectId));
+    finishProjectDeletion(projectId);
+  };
+  const moveTasksToNewProjectAndDelete = (projectId: string, name: string, color: string) => {
+    const target: Project = { id: crypto.randomUUID(), name, color };
+    commit((current) => moveProjectTasksToNewProject(current, projectId, target));
+    finishProjectDeletion(projectId);
+  };
+  const deleteProject = (projectId: string) => {
+    commit((current) => deleteProjectWithTasks(current, projectId));
+    finishProjectDeletion(projectId);
   };
   const saveTask = (taskId: string, edits: TaskEdits) => {
     const task = workspace.tasks.find((item) => item.id === taskId);
@@ -505,10 +544,41 @@ function MainApp() {
       ? taskWithUserActivity(item, "编辑任务", checklistEditsOnLatest(item, edits)) : item)));
     setEditingTaskId(null);
   };
-  const importWorkspace = (imported: Workspace) => {
+  const importWorkspace = async (backup: WorkspaceBackup) => {
+    let imported = backup.workspace;
+    if (isTauri() && backup.managedFiles.length) {
+      const mappings = await invoke<{ originalStorageKey: string; newStorageKey: string }[]>("restore_managed_files", { files: backup.managedFiles });
+      imported = remapManagedFileStorageKeys(imported, mappings);
+    }
     commit((current) => importedWorkspaceForSave(imported, current), true);
     clearSelectedTask();
+    setSelectedTaskIds(new Set());
     setSearchQuery("");
+  };
+
+  const toggleMultiSelection = (taskId: string) => setSelectedTaskIds((current) => {
+    const next = new Set(current);
+    if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
+    return next;
+  });
+  const selectAllVisible = (selected: boolean) => setSelectedTaskIds(selected ? new Set(visibleTasks.map((task) => task.id)) : new Set());
+  const batchArchive = () => {
+    const ids = [...selectedTaskIds];
+    commit((current) => archiveTasksById(current, ids));
+    setSelectedTaskIds(new Set());
+    if (selectedTaskId && ids.includes(selectedTaskId)) clearSelectedTask();
+  };
+  const batchDelete = (taskIds: string[]) => {
+    commit((current) => deleteArchivedTasksById(current, taskIds));
+    setSelectedTaskIds(new Set());
+    if (selectedTaskId && taskIds.includes(selectedTaskId)) clearSelectedTask();
+    setPendingDeletion(null);
+  };
+  const addTaskFile = (taskId: string, kind: "attachments" | "images", file: Task["attachments"][number]) => {
+    commit((current) => addManagedFile(current, taskId, kind, file));
+  };
+  const removeTaskFile = (taskId: string, kind: "attachments" | "images", fileId: string) => {
+    commit((current) => removeManagedFile(current, taskId, kind, fileId));
   };
 
   const currentTitle = view.kind === "today" ? "今日" : view.kind === "all" ? "全部" : view.kind === "active" ? "进行中" : view.kind === "archived" ? "已归档" : view.kind === "project" ? workspace.projects.find((project) => project.id === view.projectId)?.name ?? "项目" : "";
@@ -525,27 +595,29 @@ function MainApp() {
 
   return (
     <div className={`app-shell ${selectedTask && selectedProject ? "has-detail" : ""}`}>
-      <Sidebar projects={workspace.projects} view={view} version={workspace.version} storageState={storageState} storageMessage={storageMessage} integrationStatus={integrationStatus} integrationError={integrationError} openingSticky={openingSticky} onOpenSticky={() => void showSticky(true)} onView={(next) => { setView(next); if (next.kind === "integration" || next.kind === "settings") clearSelectedTask(); }} onCreate={beginTaskCreation} onCreateProject={() => { setCreateTaskAfterProject(false); setShowCreateProject(true); }} onEditProject={setEditingProjectId} />
+      <Sidebar projects={workspace.projects} view={view} version={workspace.version} storageState={storageState} storageMessage={storageMessage} integrationStatus={integrationStatus} integrationError={integrationError} openingSticky={openingSticky} onOpenSticky={() => void showSticky(true)} onView={(next) => { setView(next); setSelectedTaskIds(new Set()); if (next.kind === "integration" || next.kind === "settings") clearSelectedTask(); }} onCreate={beginTaskCreation} onCreateProject={() => { setCreateTaskAfterProject(false); setShowCreateProject(true); }} onEditProject={setEditingProjectId} />
       <main className="workspace-panel">
         {!ready && <div className="loading-bar" />}
         {showWorkspace ? <>
           <header className="workspace-header">
             <div><h1>{currentTitle}<span>{todayHeading(currentDate)}</span></h1><p>{view.kind === "today" ? "包含所有项目中今天、到期或逾期的任务" : view.kind === "all" ? "所有项目中的未归档任务，包括未安排日期的待办" : view.kind === "active" ? "所有项目中正在处理的任务" : view.kind === "archived" ? "已归档任务可恢复或永久删除" : "查看和安排这个项目的任务"}</p></div>
-            <div className="workspace-tools">{searchOpen ? <div className="search-box"><MagnifyingGlass /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); setSearchQuery(""); } }} placeholder={`搜索${currentTitle || "当前视图"}`} aria-label="搜索当前视图" /><button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} aria-label="关闭搜索"><X /></button></div> : <button className="search-trigger" aria-label="搜索当前视图" onClick={() => setSearchOpen(true)}><MagnifyingGlass /><span>搜索</span></button>}<div className="view-switch"><button className={display === "list" ? "active" : ""} onClick={() => setDisplay("list")}><List />列表</button><button className={display === "board" ? "active" : ""} onClick={() => setDisplay("board")}><Columns />看板</button></div></div>
+             <div className="workspace-tools">{searchOpen ? <div className="search-box"><MagnifyingGlass /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); setSearchQuery(""); } }} placeholder={`搜索${currentTitle || "当前视图"}`} aria-label="搜索当前视图" /><button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} aria-label="关闭搜索"><X /></button></div> : <button className="search-trigger" aria-label="搜索当前视图" onClick={() => setSearchOpen(true)}><MagnifyingGlass /><span>搜索</span></button>}<div className="view-switch"><button className={display === "list" ? "active" : ""} onClick={() => setDisplay("list")}><List />列表</button><button className={display === "board" ? "active" : ""} onClick={() => { setDisplay("board"); setSelectedTaskIds(new Set()); }}><Columns />看板</button></div></div>
           </header>
-          <div className="workspace-content">
-            {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : "这里还没有任务"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : "点击左侧“新建任务”开始记录"}</span></div>}
+           <div className="workspace-content">
+             {display === "list" && selectedTaskIds.size > 0 && <div className="batch-action-bar"><strong>已选 {selectedTaskIds.size} 项</strong><span>仅包含当前视图与搜索结果</span><button type="button" onClick={() => setSelectedTaskIds(new Set())}>取消选择</button>{view.kind === "archived" ? <button type="button" className="danger-action" onClick={() => setPendingDeletion({ kind: "batch", taskIds: [...selectedTaskIds] })}><Trash />永久删除</button> : <button type="button" className="secondary-action" onClick={batchArchive}><Archive />批量归档</button>}</div>}
+             {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} selectedTaskIds={selectedTaskIds} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} onMultiSelect={toggleMultiSelection} onSelectAll={selectAllVisible} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : workspace.projects.length ? "这里还没有任务" : "从第一个项目开始"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : workspace.projects.length ? "点击左侧“新建任务”开始记录" : "新建任务时会先引导创建项目，首次使用不会自动添加演示数据"}</span></div>}
           </div>
           <footer className="workspace-footer">共 {visibleTasks.length} 个任务（未完成 {visibleTasks.filter((task) => task.status !== "done").length} 个）</footer>
         </> : view.kind === "integration" ? <IntegrationView onStatusChange={acceptIntegrationStatus} /> : <SettingsView workspace={workspace} onImport={importWorkspace} />}
       </main>
-      {selectedTask && selectedProject && <><button type="button" className="detail-backdrop" aria-label="关闭任务详情" onClick={closeDetail} /><TaskDetail task={selectedTask} project={selectedProject} tasks={workspace.tasks} closing={detailClosing} onClose={closeDetail} onEdit={() => setEditingTaskId(selectedTask.id)} onToggle={() => toggleTask(selectedTask.id)} onTogglePin={() => togglePin(selectedTask.id)} onSubtask={(id) => toggleSubtask(selectedTask.id, id)} onAcceptanceCriterion={(id) => toggleAcceptanceCriterion(selectedTask.id, id)} onArchive={() => toggleArchive(selectedTask.id)} onDelete={() => setPendingDeletion({ kind: "task", taskId: selectedTask.id })} /></>}
+      {selectedTask && selectedProject && <><button type="button" className="detail-backdrop" aria-label="关闭任务详情" onClick={closeDetail} /><TaskDetail task={selectedTask} project={selectedProject} tasks={workspace.tasks} closing={detailClosing} onClose={closeDetail} onEdit={() => setEditingTaskId(selectedTask.id)} onToggle={() => toggleTask(selectedTask.id)} onTogglePin={() => togglePin(selectedTask.id)} onSubtask={(id) => toggleSubtask(selectedTask.id, id)} onAcceptanceCriterion={(id) => toggleAcceptanceCriterion(selectedTask.id, id)} onArchive={() => toggleArchive(selectedTask.id)} onDelete={() => setPendingDeletion({ kind: "task", taskId: selectedTask.id })} onAddFile={(kind, file) => addTaskFile(selectedTask.id, kind, file)} onRemoveFile={(kind, fileId) => removeTaskFile(selectedTask.id, kind, fileId)} /></>}
       {showCreate && defaultTaskProjectId && <CreateTaskDialog projects={workspace.projects} defaultProjectId={defaultTaskProjectId} onClose={() => setShowCreate(false)} onCreate={createTask} />}
       {showCreateProject && <ProjectEditorDialog projects={workspace.projects} onClose={() => { setShowCreateProject(false); setCreateTaskAfterProject(false); }} onSave={createProject} />}
-      {editingProject && <ProjectEditorDialog projects={workspace.projects} project={editingProject} taskCount={workspace.tasks.filter((task) => task.projectId === editingProject.id).length} onClose={() => setEditingProjectId(null)} onSave={(name, color) => saveProject(editingProject.id, name, color)} onRequestDelete={() => setPendingDeletion({ kind: "project", projectId: editingProject.id })} />}
+      {editingProject && <ProjectEditorDialog projects={workspace.projects} project={editingProject} activeTaskCount={workspace.tasks.filter((task) => task.projectId === editingProject.id && !task.archived).length} archivedTaskCount={workspace.tasks.filter((task) => task.projectId === editingProject.id && task.archived).length} onClose={() => setEditingProjectId(null)} onSave={(name, color) => saveProject(editingProject.id, name, color)} onRequestDelete={() => { setEditingProjectId(null); setPendingDeletion({ kind: "project", projectId: editingProject.id }); }} />}
       {editingTask && <TaskEditorDialog task={editingTask} projects={workspace.projects} onClose={() => setEditingTaskId(null)} onSave={(edits) => saveTask(editingTask.id, edits)} />}
       {pendingDeletion?.kind === "task" && <ConfirmDialog title="永久删除任务？" description="这会从本机任务库中永久删除该任务，无法从“已归档”恢复。" confirmLabel="永久删除" onClose={() => setPendingDeletion(null)} onConfirm={() => deleteTask(pendingDeletion.taskId)} />}
-      {pendingDeletion?.kind === "project" && <ConfirmDialog title="删除空项目？" description="项目删除后无法恢复；其中不能包含任何活动或归档任务。" confirmLabel="删除项目" onClose={() => setPendingDeletion(null)} onConfirm={() => deleteProject(pendingDeletion.projectId)} />}
+      {deletingProject && <ProjectDeletionDialog project={deletingProject} projects={workspace.projects} activeTaskCount={workspace.tasks.filter((task) => task.projectId === deletingProject.id && !task.archived).length} archivedTaskCount={workspace.tasks.filter((task) => task.projectId === deletingProject.id && task.archived).length} onClose={() => setPendingDeletion(null)} onMove={(targetId) => moveTasksAndDeleteProject(deletingProject.id, targetId)} onMoveToNew={(name, color) => moveTasksToNewProjectAndDelete(deletingProject.id, name, color)} onDelete={() => deleteProject(deletingProject.id)} />}
+      {pendingDeletion?.kind === "batch" && <ConfirmDialog title={`永久删除 ${pendingDeletion.taskIds.length} 个已归档任务？`} description="只会删除当前已选且仍处于“已归档”的任务；此操作不可恢复，相关托管附件与图片也会清理。" confirmLabel={`永久删除 ${pendingDeletion.taskIds.length} 项`} onClose={() => setPendingDeletion(null)} onConfirm={() => batchDelete(pendingDeletion.taskIds)} />}
       {completionNoticeTaskId && <NoticeDialog title="先确认验收标准" description="这项任务仍有未确认的验收标准。请在右侧详情中逐项确认后再标记完成。" onClose={() => setCompletionNoticeTaskId(null)} />}
       {windowError && <NoticeDialog title="无法打开便签" description={windowError} onClose={() => setWindowError(null)} />}
     </div>

@@ -1,7 +1,8 @@
 import { boundedActivity } from "./task-activity.ts";
-import type { AcceptanceCriterion, ActivityItem, Project, Subtask, Task, Workspace } from "./types";
+import type { AcceptanceCriterion, ActivityItem, ManagedFile, Project, Subtask, Task, Workspace } from "./types";
 
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
+const LEGACY_BACKUP_SCHEMA_VERSION = 1;
 export const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
 
 export interface WorkspaceBackup {
@@ -9,6 +10,12 @@ export interface WorkspaceBackup {
   exportedAt: number;
   appVersion: string;
   workspace: Workspace;
+  managedFiles: ManagedFilePayload[];
+}
+
+export interface ManagedFilePayload {
+  storageKey: string;
+  data: string;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -38,6 +45,10 @@ function array(value: unknown, label: string) {
 
 function stringArray(value: unknown, label: string) {
   return array(value, label).map((item) => text(item, label));
+}
+
+function optionalArray(value: unknown, label: string) {
+  return value === undefined ? [] : array(value, label);
 }
 
 function choice<T extends string>(value: unknown, choices: readonly T[], label: string): T {
@@ -77,6 +88,18 @@ function activityFrom(value: unknown): ActivityItem {
   };
 }
 
+function managedFileFrom(value: unknown): ManagedFile {
+  const item = record(value, "托管文件");
+  return {
+    id: text(item.id, "托管文件 ID"),
+    originalName: text(item.originalName, "托管文件名"),
+    mediaType: text(item.mediaType, "托管文件类型"),
+    size: integer(item.size, "托管文件大小"),
+    storageKey: text(item.storageKey, "托管文件键"),
+    addedAt: text(item.addedAt, "托管文件添加时间"),
+  };
+}
+
 function taskFrom(value: unknown, index: number): Task {
   const item = record(value, `任务 ${index + 1}`);
   const task: Task = {
@@ -95,6 +118,8 @@ function taskFrom(value: unknown, index: number): Task {
     version: integer(item.version, "任务版本"),
     subtasks: array(item.subtasks, "子任务").map(subtaskFrom),
     acceptanceCriteria: array(item.acceptanceCriteria, "验收标准").map(criterionFrom),
+    attachments: optionalArray(item.attachments, "附件").map(managedFileFrom),
+    images: optionalArray(item.images, "图片").map(managedFileFrom),
     dependencies: stringArray(item.dependencies, "任务依赖"),
     activity: boundedActivity(array(item.activity, "活动记录").map(activityFrom)),
   };
@@ -115,12 +140,13 @@ export function validateWorkspace(value: unknown): Workspace {
   return { version: integer(item.version, "任务库版本"), projects, tasks };
 }
 
-export function createWorkspaceBackup(workspace: Workspace, exportedAt = Math.floor(Date.now() / 1000), appVersion = "0.1.0"): WorkspaceBackup {
+export function createWorkspaceBackup(workspace: Workspace, exportedAt = Math.floor(Date.now() / 1000), appVersion = "0.2.0"): WorkspaceBackup {
   return {
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt,
     appVersion,
     workspace: validateWorkspace(structuredClone(workspace)),
+    managedFiles: [],
   };
 }
 
@@ -140,12 +166,28 @@ export function parseWorkspaceBackup(content: string): WorkspaceBackup {
   }
   const item = record(value, "备份文件");
   const schemaVersion = integer(item.schemaVersion, "备份格式版本");
-  if (schemaVersion !== BACKUP_SCHEMA_VERSION) throw new Error(`不支持备份格式版本 ${schemaVersion}，当前仅支持版本 ${BACKUP_SCHEMA_VERSION}`);
+  if (schemaVersion !== BACKUP_SCHEMA_VERSION && schemaVersion !== LEGACY_BACKUP_SCHEMA_VERSION) throw new Error(`不支持备份格式版本 ${schemaVersion}，当前支持版本 ${LEGACY_BACKUP_SCHEMA_VERSION} 和 ${BACKUP_SCHEMA_VERSION}`);
   return {
     schemaVersion,
     exportedAt: integer(item.exportedAt, "备份时间"),
     appVersion: text(item.appVersion, "应用版本"),
     workspace: validateWorkspace(item.workspace),
+    managedFiles: optionalArray(item.managedFiles, "托管文件内容").map((value) => {
+      const file = record(value, "托管文件内容");
+      return { storageKey: text(file.storageKey, "托管文件键"), data: text(file.data, "托管文件内容") };
+    }),
+  };
+}
+
+export function remapManagedFileStorageKeys(workspace: Workspace, mappings: { originalStorageKey: string; newStorageKey: string }[]) {
+  const map = new Map(mappings.map((mapping) => [mapping.originalStorageKey, mapping.newStorageKey]));
+  return {
+    ...workspace,
+    tasks: workspace.tasks.map((task) => ({
+      ...task,
+      attachments: task.attachments.map((file) => ({ ...file, storageKey: map.get(file.storageKey) ?? file.storageKey })),
+      images: task.images.map((file) => ({ ...file, storageKey: map.get(file.storageKey) ?? file.storageKey })),
+    })),
   };
 }
 

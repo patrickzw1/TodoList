@@ -93,8 +93,8 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
 
 const PROJECT_COLORS = ["#1665e8", "#7c5ce7", "#269b58", "#db7b22", "#d84b6b", "#258ca6"];
 
-export function ProjectEditorDialog({ projects, project, taskCount = 0, onClose, onSave, onRequestDelete }: {
-  projects: Project[]; project?: Project; taskCount?: number; onClose: () => void; onSave: (name: string, color: string) => void; onRequestDelete?: () => void;
+export function ProjectEditorDialog({ projects, project, activeTaskCount = 0, archivedTaskCount = 0, onClose, onSave, onRequestDelete }: {
+  projects: Project[]; project?: Project; activeTaskCount?: number; archivedTaskCount?: number; onClose: () => void; onSave: (name: string, color: string) => void; onRequestDelete?: () => void;
 }) {
   const [name, setName] = useState(project?.name ?? "");
   const [color, setColor] = useState(project?.color ?? PROJECT_COLORS[projects.length % PROJECT_COLORS.length]);
@@ -111,11 +111,64 @@ export function ProjectEditorDialog({ projects, project, taskCount = 0, onClose,
         <label>项目名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：个人网站发布" /></label>
         <fieldset className="color-picker"><legend>项目颜色</legend><div>{PROJECT_COLORS.map((item) => <button type="button" key={item} className={color === item ? "selected" : ""} style={{ background: item }} onClick={() => setColor(item)} aria-label={`选择颜色 ${item}`} aria-pressed={color === item} />)}</div></fieldset>
         {duplicate && <p className="dialog-error">已经存在同名项目</p>}
-        {project && taskCount > 0 && <p className="dialog-note">项目中还有 {taskCount} 个任务，移走或永久删除后才能删除项目。</p>}
-        <div className="dialog-actions">{project && onRequestDelete && <button type="button" className="danger-action push-left" disabled={taskCount > 0} onClick={onRequestDelete}>删除项目</button>}<button type="button" onClick={onClose}>取消</button><button className="dialog-primary" type="submit" disabled={!name.trim() || duplicate}>{project ? "保存项目" : <><Plus />创建项目</>}</button></div>
+        {project && (activeTaskCount > 0 || archivedTaskCount > 0) && <p className="dialog-note">项目包含 {activeTaskCount} 个活跃任务和 {archivedTaskCount} 个已归档任务。删除时可选择转移或一起永久删除。</p>}
+        <div className="dialog-actions">{project && onRequestDelete && <button type="button" className="danger-action push-left" onClick={onRequestDelete}>删除项目</button>}<button type="button" onClick={onClose}>取消</button><button className="dialog-primary" type="submit" disabled={!name.trim() || duplicate}>{project ? "保存项目" : <><Plus />创建项目</>}</button></div>
       </form>
     </div>
   );
+}
+
+export function ProjectDeletionDialog({ project, projects, activeTaskCount, archivedTaskCount, onClose, onMove, onMoveToNew, onDelete }: {
+  project: Project;
+  projects: Project[];
+  activeTaskCount: number;
+  archivedTaskCount: number;
+  onClose: () => void;
+  onMove: (targetProjectId: string) => void;
+  onMoveToNew: (name: string, color: string) => void;
+  onDelete: () => void;
+}) {
+  const destinations = projects.filter((item) => item.id !== project.id);
+  const [mode, setMode] = useState<"move" | "delete">(activeTaskCount + archivedTaskCount > 0 ? "move" : "delete");
+  const [target, setTarget] = useState(destinations[0]?.id ?? "new");
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(PROJECT_COLORS[projects.length % PROJECT_COLORS.length]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const duplicate = projects.some((item) => item.id !== project.id && item.name.trim().toLocaleLowerCase() === newName.trim().toLocaleLowerCase());
+  const total = activeTaskCount + archivedTaskCount;
+
+  if (confirmDelete) {
+    return <ConfirmDialog
+      title="再次确认永久删除？"
+      description={`项目“${project.name}”及其中 ${activeTaskCount} 个活跃任务、${archivedTaskCount} 个已归档任务将被永久删除，相关托管附件和图片也会清理。此操作不可恢复。`}
+      confirmLabel="永久删除项目及任务"
+      onClose={() => setConfirmDelete(false)}
+      onConfirm={onDelete}
+    />;
+  }
+
+  const confirm = () => {
+    if (mode === "delete") { setConfirmDelete(true); return; }
+    if (target === "new") {
+      if (newName.trim() && !duplicate) onMoveToNew(newName.trim(), newColor);
+      return;
+    }
+    onMove(target);
+  };
+
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="create-dialog project-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="project-delete-title">
+      <div className="dialog-heading"><h2 id="project-delete-title">删除项目“{project.name}”</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目删除"><X /></button></div>
+      <p className="project-delete-summary">当前有 <strong>{activeTaskCount}</strong> 个活跃任务、<strong>{archivedTaskCount}</strong> 个已归档任务。</p>
+      <label className="project-delete-option"><input type="radio" name="delete-mode" checked={mode === "move"} onChange={() => setMode("move")} /><span><strong>保留任务并转移</strong><small>任务、归档状态、附件与图片都会保留。</small></span></label>
+      {mode === "move" && <div className="project-delete-target">
+        <label>承接项目<select value={target} onChange={(event) => setTarget(event.target.value)}>{destinations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="new">新建承接项目…</option></select></label>
+        {target === "new" && <><label>新项目名称<input autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="例如：未分类任务" /></label><fieldset className="color-picker"><legend>项目颜色</legend><div>{PROJECT_COLORS.map((item) => <button type="button" key={item} className={newColor === item ? "selected" : ""} style={{ background: item }} onClick={() => setNewColor(item)} aria-label={`选择颜色 ${item}`} aria-pressed={newColor === item} />)}</div></fieldset>{duplicate && <p className="dialog-error">已经存在同名项目</p>}</>}
+      </div>}
+      <label className="project-delete-option is-danger"><input type="radio" name="delete-mode" checked={mode === "delete"} onChange={() => setMode("delete")} /><span><strong>项目和任务一起永久删除</strong><small>{total ? `将删除全部 ${total} 个任务，下一步仍需再次确认。` : "空项目仍需下一步确认。"}</small></span></label>
+      <div className="dialog-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className={mode === "delete" ? "danger-action" : "dialog-primary"} disabled={mode === "move" && target === "new" && (!newName.trim() || duplicate)} onClick={confirm}>{mode === "delete" ? "继续永久删除" : "转移并删除项目"}</button></div>
+    </div>
+  </div>;
 }
 
 export function ConfirmDialog({ title, description, confirmLabel, onClose, onConfirm }: {

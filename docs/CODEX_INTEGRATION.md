@@ -9,7 +9,7 @@ TodoList remains a standalone local app. The optional `todolist-mcp` STDIO serve
 - `create_task`
 - `update_task`
 
-The repository's `.codex/config.toml` enables these tools while Codex is working in this project. Its cross-platform launcher is only for development. The packaged desktop app bundles a native MCP sidecar, so end users do not need Node.js or Rust. Restart Codex after changing MCP configuration. Write tools use Codex's `writes` approval mode.
+The installed app registers `todolist` globally for daily tasks. The repository's `.codex/config.toml` registers a separate `todolist_dev` server only for development tests in this project. It does not override `todolist`. Never silently substitute one server for the other. The packaged production app bundles a native MCP sidecar, so end users do not need Node.js or Rust. Restart Codex after changing MCP configuration. Write tools use Codex's `writes` approval mode.
 
 The MCP registration and the Skill have different jobs:
 
@@ -21,15 +21,15 @@ The packaged app's integration page offers an explicit `Configure Codex integrat
 
 Existing TOML settings and other MCP servers are preserved. TodoList creates a timestamped backup before changing an existing config, refuses to replace a different `todolist` registration or an unowned Skill directory, and removes only entries and files carrying its ownership marker. A newer TodoList release may update a Skill previously installed by TodoList.
 
-For development or manual configuration, build the server once and point a project's `.codex/config.toml` at the absolute executable path:
+Development desktop builds cannot configure or remove the global integration. Their integration page shows the project-local `todolist_dev` entry. To prepare its sidecar:
 
 ```powershell
-cargo build --release -p todolist-mcp
+npm run build:sidecar
 ```
 
 ```toml
-[mcp_servers.todolist]
-command = "/absolute/path/to/todolist-mcp"
+[mcp_servers.todolist_dev]
+command = "/absolute/path/to/todo/target/development/release/todolist-mcp"
 startup_timeout_sec = 10
 tool_timeout_sec = 15
 required = false
@@ -37,9 +37,21 @@ enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "c
 default_tools_approval_mode = "writes"
 ```
 
-On Windows the executable ends in `.exe`. On macOS it has no extension. By default the server reads the same application-data SQLite database as the desktop app. Tests may override it with `TODOLIST_DB_PATH`.
+On Windows the executable ends in `.exe`. On macOS it has no extension. The project launcher only starts `target/development/release/todolist-mcp`; it never falls back to legacy `target/debug`, `target/release`, or an executable from the environment. The smoke-test script can explicitly select a binary with `TODOLIST_MCP_EXECUTABLE`.
 
-## Safety behavior
+Desktop and MCP share the same storage-path resolver. All ordinary builds, including `cargo build --release`, use the `app.todolist.desktop.dev` application-data directory. The explicit `production` Cargo feature selects the existing `app.todolist.desktop` directory. Release configuration enables that feature for both binaries. The desktop refuses to start if its application identifier does not match the compiled storage channel. The application identifier also separates WebView storage. On Windows, these directories are under `%APPDATA%`.
+
+Tests may explicitly override the database for either binary with `TODOLIST_DB_PATH`; do not set that variable globally. `todolist-mcp --print-storage-path` prints its resolved path and exits without opening or creating a database. Existing user data is never automatically moved, cleared, or copied into the development database.
+
+For an older developer machine whose global `todolist` still points into this repository, back up and remove only that owned registration before configuring the installed app. Keep the existing user database. Once configured, daily tasks use `todolist` even inside this repository; development tests explicitly use `todolist_dev`. Existing MCP processes retain their old binary until Codex restarts.
+
+## Attachments and images
+
+Task details support separate attachments and image collections. `get_task` and `list_tasks` include their metadata (`id`, `originalName`, `mediaType`, `size`, `storageKey`, `addedAt`); they do not return file content. `update_task` preserves both collections automatically. Files are added, removed, opened, and previewed in the desktop task-detail panel. The six MCP tools do not upload, import, remove, or preview files, and putting a path in a description does not attach it.
+
+After upgrading, use the installed app's Codex integration page to update the TodoList-managed Skill if it shows an update is needed, then restart Codex to reload the bundled MCP server and its capability descriptions. The app does not silently rewrite the user's Codex configuration during an upgrade.
+
+## Task safety
 
 - Every task carries a version. `update_task` rejects stale versions instead of silently overwriting user changes.
 - `list_tasks` uses cursor pagination with a default page size of 50 and a maximum of 100.

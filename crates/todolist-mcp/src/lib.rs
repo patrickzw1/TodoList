@@ -353,7 +353,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions required for safe updates.",
+        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and separate attachments/images metadata. File content is not returned; users add files in desktop task details.",
         annotations(
             title = "List TodoList tasks",
             read_only_hint = true,
@@ -431,7 +431,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Read one TodoList task by id before updating it.",
+        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata (originalName, mediaType, size, storageKey, addedAt). File content is not returned. Add, remove, and preview files through desktop task details; MCP has no file upload tool.",
         annotations(
             title = "Get TodoList task",
             read_only_hint = true,
@@ -504,6 +504,8 @@ impl TodoMcpServer {
             acceptance_criteria: make_acceptance_criteria(
                 input.acceptance_criteria.clone().unwrap_or_default(),
             ),
+            attachments: vec![],
+            images: vec![],
             dependencies: input.dependencies.clone().unwrap_or_default(),
             activity: vec![ActivityItem {
                 id: Uuid::new_v4().to_string(),
@@ -568,7 +570,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version.",
+        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. Existing attachments and images are preserved automatically; this tool cannot add, remove, or replace files.",
         annotations(
             title = "Update TodoList task",
             read_only_hint = false,
@@ -703,8 +705,8 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.1.0",
-    instructions = "TodoList is a local-first task app. Read current data before writing and follow list_tasks nextCursor when the full result matters. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. If a version conflict occurs, read the task again: preserve newer user edits, merge only non-conflicting fields, and skip same-field conflicts unless the user explicitly asked to replace them. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
+    version = "0.2.0",
+    instructions = "TodoList is a local-first task app. Task details support separate attachments and images, added and managed through the desktop UI. get_task and list_tasks return file metadata, not file content; update_task preserves these fields. This MCP server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. If a version conflict occurs, read the task again: preserve newer user edits, merge only non-conflicting fields, and skip same-field conflicts unless the user explicitly asked to replace them. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
 
@@ -712,7 +714,7 @@ impl ServerHandler for TodoMcpServer {}
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
-    use task_core::{Project, Workspace};
+    use task_core::{ManagedFile, Project, Workspace};
 
     fn result_json(result: CallToolResult) -> serde_json::Value {
         assert_eq!(result.is_error, Some(false));
@@ -940,6 +942,41 @@ mod tests {
         assert_eq!(workspace.tasks.len(), 1);
         assert!(!workspace.tasks[0].pinned);
         assert_eq!(workspace.tasks[0].source, "Codex 创建");
+        assert!(workspace.tasks[0].attachments.is_empty());
+        assert!(workspace.tasks[0].images.is_empty());
+        drop(server);
+        remove_database(&database_path);
+    }
+
+    #[test]
+    fn mcp_updates_preserve_desktop_managed_file_fields() {
+        let (server, database_path) = test_server();
+        backup_test_task(&server);
+        let workspace = server
+            .store
+            .mutate_workspace(|mut current| {
+                current.version += 1;
+                current.tasks[0].version += 1;
+                current.tasks[0].attachments.push(ManagedFile {
+                    id: "file-1".into(),
+                    original_name: "report.pdf".into(),
+                    media_type: "application/pdf".into(),
+                    size: 12,
+                    storage_key: "attachments/file-1.pdf".into(),
+                    added_at: "now".into(),
+                });
+                Ok(current)
+            })
+            .unwrap();
+        assert_eq!(
+            update_title(&server, &workspace.tasks[0], "Renamed").is_error,
+            Some(false)
+        );
+        let updated = server.store.load_workspace().unwrap().unwrap();
+        assert_eq!(
+            updated.tasks[0].attachments[0].storage_key,
+            "attachments/file-1.pdf"
+        );
         drop(server);
         remove_database(&database_path);
     }

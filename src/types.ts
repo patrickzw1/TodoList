@@ -26,6 +26,15 @@ export interface ActivityItem {
   at: string;
 }
 
+export interface ManagedFile {
+  id: string;
+  originalName: string;
+  mediaType: string;
+  size: number;
+  storageKey: string;
+  addedAt: string;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -42,6 +51,8 @@ export interface Task {
   version: number;
   subtasks: Subtask[];
   acceptanceCriteria: AcceptanceCriterion[];
+  attachments: ManagedFile[];
+  images: ManagedFile[];
   dependencies: string[];
   activity: ActivityItem[];
 }

@@ -1,28 +1,20 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const tempDirectory = await mkdtemp(join(tmpdir(), "todolist-mcp-smoke-"));
 const executableName = process.platform === "win32" ? "todolist-mcp.exe" : "todolist-mcp";
-const releaseExecutable = join(process.cwd(), "target", "release", executableName);
-let executableOverride = process.env.TODOLIST_MCP_EXECUTABLE;
-if (!executableOverride) try {
-  await access(releaseExecutable);
-  executableOverride = releaseExecutable;
-} catch {
-  // The launcher will use a debug build or cargo when no release build exists.
-}
-const child = spawn(process.execPath, [join(process.cwd(), "scripts", "start-mcp.mjs")], {
+const executable = process.env.TODOLIST_MCP_EXECUTABLE || join(process.cwd(), "target", "development", "release", executableName);
+const child = spawn(executable, [], {
   cwd: process.cwd(),
   env: {
     ...process.env,
     TODOLIST_DB_PATH: join(tempDirectory, "todolist.sqlite"),
-    ...(executableOverride ? { TODOLIST_MCP_EXECUTABLE: executableOverride } : {}),
   },
   stdio: ["pipe", "pipe", "pipe"],
 });
-console.log(`MCP smoke executable: ${executableOverride || "launcher fallback"}`);
+console.log(`MCP smoke executable: ${executable}`);
 
 const responses = new Map();
 let stderr = "";
@@ -63,11 +55,14 @@ try {
     params: {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "todolist-smoke", version: "0.1.0" },
+      clientInfo: { name: "todolist-smoke", version: "0.2.0" },
     },
   });
   const initialized = await waitFor(1);
   if (initialized.error) throw new Error(JSON.stringify(initialized.error));
+  for (const capability of ["attachments", "images", "desktop UI", "no file upload"]) {
+    if (!initialized.result.instructions?.includes(capability)) throw new Error(`Missing MCP capability guidance: ${capability}`);
+  }
 
   send({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
   send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
@@ -80,6 +75,7 @@ try {
     throw new Error(`Unexpected tools: ${toolNames.join(", ")}`);
   }
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
+  if (!tools.get("get_task")?.description?.includes("attachments/images")) throw new Error("File metadata is not documented in get_task");
   for (const [toolName, propertyNames] of [
     ["create_project", ["request_id", "name", "color"]],
     ["create_task", ["request_id", "project_id", "title"]],

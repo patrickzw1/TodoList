@@ -2,11 +2,11 @@
 
 ## Comparison target
 
-- Product visual source: `C:\Users\patrick\Downloads\ChatGPT Image Aug 31, 2026, 02_16_00 PM.png`
-- User feedback source: `E:\AppDevelopment\todo\qa\feedback-task-editor-before.png` (626 × 839 px)
-- Rendered implementation: `E:\AppDevelopment\todo\qa\implementation-task-editor-redesign.png` (1280 × 720 px)
-- Combined comparison: `E:\AppDevelopment\todo\qa\task-editor-redesign-comparison.png`
-- Interactive comparison document: `E:\AppDevelopment\todo\qa\task-editor-redesign-compare.html`
+- Product visual source: `qa/source-reference.png`
+- User feedback source: `qa\feedback-task-editor-before.png` (626 × 839 px)
+- Rendered implementation: `qa\implementation-task-editor-redesign.png` (1280 × 720 px)
+- Combined comparison: `qa\task-editor-redesign-comparison.png`
+- Interactive comparison document: `qa\task-editor-redesign-compare.html`
 - Viewport: 1280 × 720 CSS px, devicePixelRatio 1
 - Normalization: the implementation modal was cropped from x=320, y=19 to a 640 × 682 component view; the source remains at its native 626 × 839 size. The height difference comes from the shorter implementation viewport, so vertical content density was judged above the fold and through the independently scrolling body rather than by total visible field count.
 - State: Today/list view, “运行发布前测试” selected, task editor open, title input focused.

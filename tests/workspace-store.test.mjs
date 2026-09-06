@@ -18,8 +18,10 @@ function fixture(version = 10) {
 
 // Run the real hook with in-memory React hooks, storage and IPC. No user database,
 // timers or browser profile are involved, and all queued operations are flushed.
-function driver({ desktop = true, cacheFails = false, readFails = false, beforeSave } = {}) {
-  let database = fixture(11), cached = fixture(), slot = 0, first = true;
+function driver({ desktop = true, cacheFails = false, readFails = false, beforeSave, initialDatabase, initialCache, search = "" } = {}) {
+  let database = initialDatabase === undefined ? fixture(11) : initialDatabase;
+  let cached = initialCache === undefined ? fixture() : initialCache;
+  let slot = 0, first = true;
   const states = [], effects = [], listeners = new Map(), timers = [], calls = [];
   const react = {
     useState(initial) {
@@ -34,7 +36,7 @@ function driver({ desktop = true, cacheFails = false, readFails = false, beforeS
   const window = {
     ...(desktop ? { __TAURI_INTERNALS__: {} } : {}),
     localStorage: {
-      getItem() { if (readFails) throw new Error("SecurityError"); return JSON.stringify(cached); },
+      getItem() { if (readFails) throw new Error("SecurityError"); return cached === null ? null : JSON.stringify(cached); },
       setItem(key, value) { if (cacheFails) throw new Error("QuotaExceededError"); cached = JSON.parse(value); },
     },
     addEventListener(name, callback) { listeners.set(name, callback); },
@@ -42,13 +44,14 @@ function driver({ desktop = true, cacheFails = false, readFails = false, beforeS
     dispatchEvent(event) { listeners.get(event.type)?.(); },
     setInterval(callback) { timers.push(callback); return timers.length; },
     clearInterval() {},
+    location: { search },
   };
   const invoke = async (command, args) => {
     calls.push(command);
     if (command === "load_workspace") return structuredClone(database);
-    if (command === "load_workspace_version") return database.version;
+    if (command === "load_workspace_version") return database?.version ?? null;
     if (beforeSave) { const hook = beforeSave; beforeSave = undefined; hook(database); }
-    if (args.workspace.version <= database.version) throw new Error("workspace version conflict");
+    if (database && args.workspace.version <= database.version) throw new Error("workspace version conflict");
     database = structuredClone(args.workspace);
     if (command === "restore_workspace") {
       for (const task of database.tasks) task.version = 500;
@@ -65,7 +68,7 @@ function driver({ desktop = true, cacheFails = false, readFails = false, beforeS
   }).outputText;
   vm.runInNewContext(source, { exports, require: (name) => {
     assert.ok(dependencies[name], `Unexpected import ${name}`); return dependencies[name];
-  }, window, structuredClone, console, CustomEvent: class { constructor(type) { this.type = type; } } });
+  }, window, structuredClone, console, URLSearchParams, CustomEvent: class { constructor(type) { this.type = type; } } });
   const render = () => { slot = 0; const hook = exports.useWorkspace(true); first = false; return hook; };
   render();
   return {
@@ -76,6 +79,19 @@ function driver({ desktop = true, cacheFails = false, readFails = false, beforeS
     failCache(value) { cacheFails = value; },
   };
 }
+
+test("new desktop and browser workspaces start empty while the browser demo remains explicit", async () => {
+  const desktop = driver({ initialDatabase: null, initialCache: null });
+  const desktopHook = await desktop.mount();
+  assert.deepEqual(desktopHook.workspace.projects, []);
+  assert.deepEqual(desktopHook.workspace.tasks, []);
+  assert.deepEqual(desktop.database.tasks, []);
+
+  const browser = driver({ desktop: false, initialCache: null });
+  assert.deepEqual((await browser.mount()).workspace.tasks, []);
+  const demo = driver({ desktop: false, initialCache: null, search: "?demo=1" });
+  assert.equal((await demo.mount()).workspace.tasks[0].title, "Task");
+});
 
 const update = (patch) => (current) => ({ ...current, version: current.version + 1,
   tasks: current.tasks.map((task) => taskWithUserActivity(task, "用户操作", patch)),

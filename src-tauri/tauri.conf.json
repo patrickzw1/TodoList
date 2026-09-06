@@ -1,10 +1,10 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "TodoList",
-  "version": "0.1.0",
-  "identifier": "app.todolist.desktop",
+  "productName": "TodoList Dev",
+  "version": "0.2.0",
+  "identifier": "app.todolist.desktop.dev",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run build:sidecar && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build:sidecar && npm run build",
     "frontendDist": "../dist/client"
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "TodoList 任务台",
+        "title": "TodoList 开发版",
         "width": 1360,
         "height": 860,
         "minWidth": 960,

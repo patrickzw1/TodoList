@@ -3,7 +3,7 @@ import { CheckCircle, LinkSimple, WarningCircle, X } from "@phosphor-icons/react
 import { useEffect, useState } from "react";
 
 export interface CodexIntegrationStatus {
-  state: "configured" | "conflict" | "partial" | "not_configured";
+  state: "configured" | "conflict" | "partial" | "not_configured" | "development";
   configured: boolean;
   canConfigure: boolean;
   managedMigration: boolean;
@@ -78,7 +78,7 @@ export function CodexIntegrationCard({ onStatusChange }: { onStatusChange?: (sta
     ? "已配置"
     : status.state === "partial"
       ? status.managedMigration ? "可迁移" : "待修复"
-      : status.state === "conflict" ? "存在冲突" : "未配置";
+      : status.state === "conflict" ? "存在冲突" : status.state === "development" ? "开发专用" : "未配置";
 
   return (
     <section className="integration-card">
@@ -116,7 +116,7 @@ export function CodexIntegrationCard({ onStatusChange }: { onStatusChange?: (sta
         <div className="integration-actions">
           {status.configured
             ? <button onClick={() => setPending("remove")}>移除集成</button>
-            : <button className="integration-primary" disabled={!desktop || !status.canConfigure} onClick={() => setPending("configure")}><LinkSimple />{status.managedMigration ? "迁移到当前安装" : "配置 Codex 集成"}</button>}
+            : <button className="integration-primary" disabled={!desktop || !status.canConfigure} onClick={() => setPending("configure")}><LinkSimple />{status.state === "development" ? "使用项目内 todolist_dev" : status.managedMigration ? "迁移到当前安装" : "配置 Codex 集成"}</button>}
           <span>{status.configured ? <><CheckCircle weight="fill" />重启 Codex 后生效</> : "配置完全由用户主动触发"}</span>
         </div>
       )}

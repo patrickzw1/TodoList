@@ -10,6 +10,8 @@ const CHANGE_EVENT = "todolist-workspace-changed";
 const VERSION_POLL_MS = 2000;
 const MAX_SAVE_ATTEMPTS = 3;
 
+export const emptyWorkspace: Workspace = { version: 1, projects: [], tasks: [] };
+
 export type StorageState = "saved" | "saving" | "merged" | "error";
 
 type WorkspaceUpdater = (current: Workspace) => Workspace;
@@ -30,10 +32,14 @@ function readBrowserWorkspace(): Workspace {
   let saved: string | null;
   try { saved = window.localStorage.getItem(STORAGE_KEY); } catch (error) {
     if (!isTauriRuntime()) throw error;
-    return structuredClone(seedWorkspace);
+    return structuredClone(emptyWorkspace);
   }
-  if (!saved) return structuredClone(seedWorkspace);
-  try { return normalizeWorkspace(JSON.parse(saved) as Workspace); } catch { return structuredClone(seedWorkspace); }
+  if (!saved) return structuredClone(browserInitialWorkspace());
+  try { return normalizeWorkspace(JSON.parse(saved) as Workspace); } catch { return structuredClone(emptyWorkspace); }
+}
+
+function browserInitialWorkspace() {
+  return new URLSearchParams(window.location.search).get("demo") === "1" ? seedWorkspace : emptyWorkspace;
 }
 
 function normalizeWorkspace(workspace: Workspace): Workspace {
@@ -46,6 +52,8 @@ function normalizeWorkspace(workspace: Workspace): Workspace {
       acceptanceCriteria: (task.acceptanceCriteria as unknown[]).map((criterion, index) => typeof criterion === "string"
         ? { id: `legacy-${task.id}-${index}`, title: criterion, completed: false }
         : criterion as Task["acceptanceCriteria"][number]),
+      attachments: task.attachments ?? [],
+      images: task.images ?? [],
     })),
   };
 }
@@ -64,7 +72,7 @@ async function loadPersistedWorkspace(): Promise<Workspace> {
   const workspace = await invoke<Workspace | null>("load_workspace");
   if (workspace) return workspace;
 
-  const initial = structuredClone(seedWorkspace);
+  const initial = structuredClone(emptyWorkspace);
   try {
     await invoke("save_workspace", { workspace: initial });
     return initial;

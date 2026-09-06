@@ -24,7 +24,7 @@ function downloadBrowserBackup(workspace: Workspace) {
   return name;
 }
 
-export function DataBackupCard({ workspace, onImport }: { workspace: Workspace; onImport: (workspace: Workspace) => void }) {
+export function DataBackupCard({ workspace, onImport }: { workspace: Workspace; onImport: (backup: WorkspaceBackup) => Promise<void> }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<"export" | "import" | null>(null);
   const [pending, setPending] = useState<{ backup: WorkspaceBackup; source: string } | null>(null);
@@ -90,18 +90,26 @@ export function DataBackupCard({ workspace, onImport }: { workspace: Workspace; 
     }
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (!pending) return;
-    onImport(pending.backup.workspace);
-    setMessage(`已载入 ${pending.source}，请确认左侧显示“本地已保存”`);
-    setPending(null);
+    setBusy("import");
+    setError("");
+    try {
+      await onImport(pending.backup);
+      setMessage(`已载入 ${pending.source}，请确认左侧显示“本地已保存”`);
+      setPending(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const archived = pending?.backup.workspace.tasks.filter((task) => task.archived).length ?? 0;
   return (
     <section className="backup-card">
       <div className="backup-heading">
-        <div><strong>数据备份与恢复</strong><span>JSON 备份包含项目、任务、子任务、验收状态和活动记录</span></div>
+        <div><strong>数据备份与恢复</strong><span>包含项目、任务、附件和图片；备份文件上限 25 MB</span></div>
         <div className="backup-actions">
           <button disabled={busy !== null} onClick={() => void exportBackup()}><DownloadSimple />{busy === "export" ? "正在导出……" : "导出备份"}</button>
           <button disabled={busy !== null} onClick={() => void prepareImport()}><UploadSimple />{busy === "import" ? "正在读取……" : "导入备份"}</button>
@@ -114,7 +122,7 @@ export function DataBackupCard({ workspace, onImport }: { workspace: Workspace; 
         <span>{pending.source} · {backupDate(pending.backup.exportedAt)}</span>
         <dl><div><dt>项目</dt><dd>{pending.backup.workspace.projects.length}</dd></div><div><dt>任务</dt><dd>{pending.backup.workspace.tasks.length}</dd></div><div><dt>已归档</dt><dd>{archived}</dd></div></dl>
         <p><WarningCircle />确认后会用这份备份替换当前任务库。建议先导出当前数据；原备份文件不会被修改。</p>
-        <div><button disabled={busy !== null} onClick={() => void exportBackup()}><DownloadSimple />先备份当前数据</button><button className="backup-confirm" onClick={confirmImport}>确认替换任务库</button></div>
+        <div><button disabled={busy !== null} onClick={() => void exportBackup()}><DownloadSimple />先备份当前数据</button><button className="backup-confirm" disabled={busy !== null} onClick={() => void confirmImport()}>{busy === "import" ? "正在恢复……" : "确认替换任务库"}</button></div>
       </div>}
       {message && <div className="backup-message"><CheckCircle weight="fill" />{message}</div>}
       {error && <div className="backup-message is-error"><WarningCircle />{error}</div>}

@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use task_core::Workspace;
 
+pub mod managed_files;
+pub mod storage_path;
+
 const MAX_IDEMPOTENCY_RECORDS: i64 = 1_000;
 
 #[derive(Debug, Clone)]
@@ -37,6 +40,11 @@ impl SqliteTaskStore {
             )
             .map_err(|error| error.to_string())?;
         Self::migrate(&connection)?;
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS managed_file_cleanup (storage_key TEXT PRIMARY KEY);",
+            )
+            .map_err(|error| error.to_string())?;
         Ok(store)
     }
 
@@ -114,6 +122,105 @@ impl SqliteTaskStore {
     pub fn load_workspace(&self) -> Result<Option<Workspace>, String> {
         let connection = self.connection()?;
         Self::load_from_connection(&connection)
+    }
+
+    pub fn managed_files_root(&self) -> PathBuf {
+        self.database_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("managed-files")
+    }
+
+    /// Stage the file and its task association under the same database write lock.
+    pub fn import_task_file(
+        &self,
+        task_id: &str,
+        source: &Path,
+        kind: &str,
+    ) -> Result<task_core::ManagedFile, String> {
+        let root = self.managed_files_root();
+        let mut imported = None;
+        let result = self.mutate_workspace(|mut workspace| {
+            let task = workspace
+                .tasks
+                .iter_mut()
+                .find(|task| task.id == task_id)
+                .ok_or("The selected task no longer exists")?;
+            let file = managed_files::import_into_root(&root, source, kind)?;
+            imported = Some(file.clone());
+            if kind == "image" {
+                task.images.push(file);
+            } else {
+                task.attachments.push(file);
+            }
+            task.version += 1;
+            task.activity.push(task_core::ActivityItem {
+                id: uuid::Uuid::new_v4().to_string(),
+                actor: "user".into(),
+                action: if kind == "image" {
+                    "添加图片"
+                } else {
+                    "添加附件"
+                }
+                .into(),
+                at: chrono::Utc::now().to_rfc3339(),
+            });
+            workspace.version += 1;
+            Ok(workspace)
+        });
+        if let Err(error) = result {
+            if let Some(file) = imported {
+                if let Ok(path) = managed_files::resolve_storage_key(&root, &file.storage_key) {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+            return Err(error);
+        }
+        Ok(imported.expect("successful import has metadata"))
+    }
+
+    /// Only reclaim files removed by a committed change. Fresh imports/restores
+    /// are not cleanup candidates. Re-read under a write lock across processes.
+    pub fn cleanup_managed_files(&self) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        let workspace = Self::load_from_connection(&transaction)?;
+        let referenced: std::collections::HashSet<_> = workspace
+            .iter()
+            .flat_map(|workspace| &workspace.tasks)
+            .flat_map(|task| task.attachments.iter().chain(&task.images))
+            .map(|file| file.storage_key.as_str())
+            .collect();
+        let keys = {
+            let mut statement = transaction
+                .prepare("SELECT storage_key FROM managed_file_cleanup")
+                .map_err(|error| error.to_string())?;
+            let values = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            values
+        };
+        for key in keys {
+            if !referenced.contains(key.as_str()) {
+                let path = managed_files::resolve_storage_key(&self.managed_files_root(), &key)?;
+                if let Err(error) = std::fs::remove_file(path) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        continue;
+                    }
+                }
+            }
+            transaction
+                .execute(
+                    "DELETE FROM managed_file_cleanup WHERE storage_key = ?1",
+                    params![key],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())
     }
 
     pub fn load_workspace_version(&self) -> Result<Option<u64>, String> {
@@ -326,6 +433,26 @@ impl SqliteTaskStore {
         workspace: &Workspace,
         previous: Option<&Workspace>,
     ) -> Result<(), String> {
+        let retained: std::collections::HashSet<_> = workspace
+            .tasks
+            .iter()
+            .flat_map(|task| task.attachments.iter().chain(&task.images))
+            .map(|file| file.storage_key.as_str())
+            .collect();
+        for file in previous
+            .into_iter()
+            .flat_map(|workspace| &workspace.tasks)
+            .flat_map(|task| task.attachments.iter().chain(&task.images))
+        {
+            if !retained.contains(file.storage_key.as_str()) {
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO managed_file_cleanup (storage_key) VALUES (?1)",
+                        params![file.storage_key],
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         // Include removed tasks too: an older still-running MCP may have updated
         // their version without knowing about this clock.
         let high_water = workspace
@@ -559,6 +686,8 @@ mod tests {
                     version: 1,
                     subtasks: vec![],
                     acceptance_criteria: vec![],
+                    attachments: vec![],
+                    images: vec![],
                     dependencies: vec![],
                     activity,
                 }],

@@ -1,14 +1,16 @@
 use std::fs;
 use task_core::Workspace;
-use task_store_sqlite::SqliteTaskStore;
+use task_store_sqlite::{storage_path, SqliteTaskStore};
 use tauri::Manager;
 
 mod backup;
 mod codex_integration;
+mod managed_files;
 pub mod window_actions;
 
-struct AppState {
-    store: SqliteTaskStore,
+pub(crate) struct AppState {
+    pub(crate) store: SqliteTaskStore,
+    pub(crate) managed_files_root: std::path::PathBuf,
 }
 
 #[tauri::command]
@@ -23,7 +25,11 @@ fn load_workspace_version(state: tauri::State<'_, AppState>) -> Result<Option<u6
 
 #[tauri::command]
 fn save_workspace(state: tauri::State<'_, AppState>, workspace: Workspace) -> Result<(), String> {
-    state.store.save_workspace(&workspace)
+    state.store.save_workspace(&workspace)?;
+    if let Err(error) = state.store.cleanup_managed_files() {
+        eprintln!("Could not reconcile TodoList managed files after save: {error}");
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -31,7 +37,11 @@ fn restore_workspace(
     state: tauri::State<'_, AppState>,
     workspace: Workspace,
 ) -> Result<Workspace, String> {
-    state.store.restore_workspace(&workspace)
+    let restored = state.store.restore_workspace(&workspace)?;
+    if let Err(error) = state.store.cleanup_managed_files() {
+        eprintln!("Could not reconcile TodoList managed files after restore: {error}");
+    }
+    Ok(restored)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,11 +51,27 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let app_data = app.path().app_data_dir()?;
-            fs::create_dir_all(&app_data)?;
-            let store = SqliteTaskStore::open(app_data.join("todolist.sqlite"))
-                .map_err(std::io::Error::other)?;
-            app.manage(AppState { store });
+            if app.config().identifier != storage_path::APP_IDENTIFIER {
+                return Err(std::io::Error::other(
+                    "TodoList build channel and application identifier do not match",
+                )
+                .into());
+            }
+            let database_path = storage_path::database_path().map_err(std::io::Error::other)?;
+            if let Some(parent) = database_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let store = SqliteTaskStore::open(database_path).map_err(std::io::Error::other)?;
+            let managed_files_root =
+                storage_path::managed_files_path().map_err(std::io::Error::other)?;
+            fs::create_dir_all(&managed_files_root)?;
+            if let Err(error) = store.cleanup_managed_files() {
+                eprintln!("Could not finish pending managed file cleanup: {error}");
+            }
+            app.manage(AppState {
+                store,
+                managed_files_root,
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -53,6 +79,10 @@ pub fn run() {
             load_workspace_version,
             save_workspace,
             restore_workspace,
+            managed_files::import_managed_file,
+            managed_files::open_managed_file,
+            managed_files::read_managed_image,
+            managed_files::restore_managed_files,
             backup::export_workspace_backup,
             backup::read_workspace_backup,
             window_actions::open_main_window,

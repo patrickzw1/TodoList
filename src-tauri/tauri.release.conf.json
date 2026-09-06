@@ -1,4 +1,23 @@
 {
+  "productName": "TodoList",
+  "identifier": "app.todolist.desktop",
+  "build": {
+    "features": ["production"],
+    "beforeDevCommand": "npm run build:sidecar -- --production && npm run dev",
+    "beforeBuildCommand": "npm run build:sidecar -- --production && npm run build"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "TodoList 任务台",
+      "width": 1360,
+      "height": 860,
+      "minWidth": 960,
+      "minHeight": 640,
+      "resizable": true,
+      "center": true
+    }]
+  },
   "bundle": {
     "createUpdaterArtifacts": true,
     "targets": [

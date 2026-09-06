@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $privateKey) -or -not (Test-Path -LiteralPath $
     throw 'Release signing material is missing. See docs/UPDATES.md.'
 }
 
-$variables = @('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS')
+$variables = @('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'CARGO_ENCODED_RUSTFLAGS')
 $previousEnvironment = @{}
 foreach ($name in $variables) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location $projectRoot
@@ -17,6 +17,17 @@ try {
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Net.NetworkCredential]::new('', $securePassword).Password
     $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'target\package-build'
     $env:CARGO_BUILD_JOBS = '1'
+    # Keep developer paths out of Rust panic strings and Windows debug-directory records.
+    $rustFlags = if ($env:CARGO_ENCODED_RUSTFLAGS) {
+        @($env:CARGO_ENCODED_RUSTFLAGS.Split([char]0x1f))
+    } elseif ($env:RUSTFLAGS) {
+        @($env:RUSTFLAGS -split '\s+')
+    } else { @() }
+    $env:CARGO_ENCODED_RUSTFLAGS = ($rustFlags + @(
+        "--remap-path-prefix=$projectRoot=TodoList",
+        "--remap-path-prefix=$env:USERPROFILE=build-user",
+        '-Clink-arg=/PDBALTPATH:TodoList.pdb'
+    )) -join [char]0x1f
     & npm.cmd run build:desktop -- --ci --config src-tauri/tauri.release.conf.json --bundles nsis
     if ($LASTEXITCODE -ne 0) { throw 'Desktop release build failed.' }
 

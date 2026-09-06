@@ -82,6 +82,17 @@ pub struct ActivityItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ManagedFile {
+    pub id: String,
+    pub original_name: String,
+    pub media_type: String,
+    pub size: u64,
+    pub storage_key: String,
+    pub added_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
     pub project_id: String,
@@ -100,6 +111,10 @@ pub struct Task {
     pub subtasks: Vec<Subtask>,
     #[serde(default, deserialize_with = "deserialize_acceptance_criteria")]
     pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    #[serde(default)]
+    pub attachments: Vec<ManagedFile>,
+    #[serde(default)]
+    pub images: Vec<ManagedFile>,
     pub dependencies: Vec<String>,
     pub activity: Vec<ActivityItem>,
 }
@@ -204,6 +219,8 @@ mod tests {
                 version: 1,
                 subtasks: vec![],
                 acceptance_criteria: vec![],
+                attachments: vec![],
+                images: vec![],
                 dependencies: vec![],
                 activity: vec![],
             }],
@@ -234,6 +251,8 @@ mod tests {
             "Legacy criterion"
         );
         assert!(!workspace.tasks[0].acceptance_criteria[0].completed);
+        assert!(workspace.tasks[0].attachments.is_empty());
+        assert!(workspace.tasks[0].images.is_empty());
     }
 
     #[test]
@@ -254,6 +273,8 @@ mod tests {
             version: 1,
             subtasks: vec![],
             acceptance_criteria: vec![],
+            attachments: vec![],
+            images: vec![],
             dependencies: vec![],
             activity: vec![],
         };

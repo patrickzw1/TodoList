@@ -9,3 +9,9 @@ src-tauri/binaries/
 *.dpapi
 .env
 .env.*
+qa/attachment-design-handoff/
+managed-files/
+*.sqlite
+*.sqlite-*
+*.db
+*.pdb

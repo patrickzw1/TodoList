@@ -2,7 +2,7 @@
 
 > 以下为修复任务完成时的历史记录。后续发布复核又补上了“前一次操作失败后，排队编辑须重读最新数据库”的回归与修复；最终前端测试增至 35 项。当前发布配置、构建命令和验收范围分别见 `UPDATES.md` 与 `RELEASE_NOTES_v0.1.0.md`。
 
-本轮在 `E:\AppDevelopment\todo` 直接开发。项目仍无 HEAD，所有源码仍未跟踪；未执行 commit、push、远程仓库创建、发布、安装包安装或用户级 Codex 配置修改。SQLite 回归仅使用临时数据库；浏览器使用预览数据中的专用测试项目“修复回归 0905”。
+本轮在 `the repository checkout` 直接开发。项目仍无 HEAD，所有源码仍未跟踪；未执行 commit、push、远程仓库创建、发布、安装包安装或用户级 Codex 配置修改。SQLite 回归仅使用临时数据库；浏览器使用预览数据中的专用测试项目“修复回归 0905”。
 
 ## 修复结果
 
@@ -21,7 +21,7 @@
 - `npm.cmd run typecheck`：通过。
 - `npm.cmd run test:sites`：4 项通过。
 - `cargo fmt --all -- --check`：通过。
-- MCP STDIO schema 冒烟指定 `TODOLIST_MCP_EXECUTABLE=E:\AppDevelopment\todo\target\package-build\release\todolist-mcp.exe`：六个工具通过。脚本现在尊重显式路径，不再覆盖为旧的默认 release 路径。
+- MCP STDIO schema 冒烟指定 `TODOLIST_MCP_EXECUTABLE=target\package-build\release\todolist-mcp.exe`：六个工具通过。脚本现在尊重显式路径，不再覆盖为旧的默认 release 路径。
 - Node 测试首次受沙箱 `spawn EPERM` 限制；允许本地测试子进程后通过。Rust 初次失败为 schema 版本断言仍写 2；随 schema 3 更新断言后通过。
 
 ## 浏览器验收
@@ -37,11 +37,11 @@
 
 ## 构建与限制
 
-采用 `CARGO_TARGET_DIR=E:\AppDevelopment\todo\target\package-build` 隔离现有被 Codex 占用的 debug/release MCP。sidecar 准备脚本已按该目录取源文件，并比对源文件与 `src-tauri/binaries` 副本的 SHA-256 一致。
+采用 `CARGO_TARGET_DIR=target\package-build` 隔离现有被 Codex 占用的 debug/release MCP。sidecar 准备脚本已按该目录取源文件，并比对源文件与 `src-tauri/binaries` 副本的 SHA-256 一致。
 
 构建命令：`npm.cmd run build:desktop -- --no-bundle --ci`，配合 `CARGO_NET_OFFLINE=true`、`CARGO_BUILD_JOBS=1`。只生成本地可执行文件，不生成或安装发布安装包。
 
-最终构建成功，桌面产物：`E:\AppDevelopment\todo\target\package-build\release\todolist-desktop.exe`。
+最终构建成功，桌面产物：`target\package-build\release\todolist-desktop.exe`。
 
 - 修改时间：2026-09-05 21:03:50（Asia/Shanghai）；大小 14,969,344 字节。
 - 桌面 EXE SHA-256：`E9B97BA3E04D50D5086312E907369368507229ED36EF474580C63F244027C3CC`。

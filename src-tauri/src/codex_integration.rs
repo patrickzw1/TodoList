@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+use task_store_sqlite::storage_path::IS_PRODUCTION;
 use tempfile::NamedTempFile;
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
@@ -65,19 +66,6 @@ fn resolve_mcp_executable() -> Result<PathBuf, String> {
         .join(executable_name);
     if installed_candidate.is_file() {
         return Ok(installed_candidate);
-    }
-
-    if cfg!(debug_assertions) {
-        let development_candidate = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("target")
-            .join("release")
-            .join(executable_name);
-        if development_candidate.is_file() {
-            return development_candidate
-                .canonicalize()
-                .map_err(|error| error.to_string());
-        }
     }
 
     Err("TodoList MCP executable is not bundled with this build".to_string())
@@ -404,11 +392,33 @@ fn remove_config(paths: &IntegrationPaths) -> Result<(), String> {
 
 #[tauri::command]
 pub fn codex_integration_status() -> Result<CodexIntegrationStatus, String> {
+    if !IS_PRODUCTION {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        return Ok(CodexIntegrationStatus {
+            state: "development".into(),
+            configured: false,
+            can_configure: false,
+            managed_migration: false,
+            config_path: display_path(&root.join(".codex/config.toml")),
+            skill_path: display_path(&root.join(".agents/skills/todolist-mcp")),
+            mcp_command: display_path(&root.join("scripts/start-mcp.mjs")),
+            message: "开发版使用项目内的 todolist_dev 和独立开发库；日常集成请在安装版中配置"
+                .into(),
+        });
+    }
     inspect(&user_paths()?)
+}
+
+fn require_production_integration() -> Result<(), String> {
+    if !IS_PRODUCTION {
+        return Err("开发版不能更改全局 Codex 集成，请在安装版中配置 todolist".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn configure_codex_integration() -> Result<CodexIntegrationStatus, String> {
+    require_production_integration()?;
     let paths = user_paths()?;
     if !paths.mcp_executable.is_file() {
         return Err("TodoList MCP executable is missing".to_string());
@@ -425,6 +435,7 @@ pub fn configure_codex_integration() -> Result<CodexIntegrationStatus, String> {
 
 #[tauri::command]
 pub fn remove_codex_integration() -> Result<CodexIntegrationStatus, String> {
+    require_production_integration()?;
     let paths = user_paths()?;
     remove_config(&paths)?;
     remove_skill(&paths)?;
@@ -434,6 +445,20 @@ pub fn remove_codex_integration() -> Result<CodexIntegrationStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(feature = "production"))]
+    fn development_commands_cannot_modify_global_integration() {
+        let status = codex_integration_status().unwrap();
+        assert_eq!(status.state, "development");
+        assert!(!status.can_configure);
+        assert!(configure_codex_integration()
+            .unwrap_err()
+            .contains("开发版不能"));
+        assert!(remove_codex_integration()
+            .unwrap_err()
+            .contains("开发版不能"));
+    }
 
     fn test_paths(root: &Path) -> IntegrationPaths {
         let executable = root.join(if cfg!(windows) {

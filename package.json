@@ -1,6 +1,6 @@
 {
   "name": "todolist",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,13 +8,14 @@
     "build": "vite build && node scripts/prepare-sites-build.mjs",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "dev:desktop": "tauri dev",
+    "dev:desktop": "node scripts/desktop.mjs dev",
     "build:sidecar": "node scripts/prepare-mcp-sidecar.mjs",
-    "build:desktop": "tauri build",
+    "build:desktop": "node scripts/desktop.mjs build",
     "preview": "vite preview",
     "test:mcp-stdio": "node scripts/mcp-stdio-smoke.mjs",
+    "test:channels": "node --test tests/build-channels.test.mjs",
     "test:windows": "node --experimental-strip-types --test --test-concurrency=1 tests/window-actions.test.mjs",
-    "test:app": "node --experimental-strip-types --test --test-concurrency=1 tests/task-behavior.test.mjs tests/window-actions.test.mjs tests/workspace-backup.test.mjs tests/workspace-store.test.mjs",
+    "test:app": "node --experimental-strip-types --test --test-concurrency=1 tests/task-behavior.test.mjs tests/window-actions.test.mjs tests/workspace-actions.test.mjs tests/workspace-backup.test.mjs tests/workspace-store.test.mjs",
     "test:sites": "node --test tests/sites-worker.test.mjs"
   },
   "dependencies": {

@@ -21,6 +21,21 @@ test("TodoList backup round trips its metadata and workspace", () => {
   assert.equal(parsed.exportedAt, 1788494400);
   assert.equal(parsed.workspace.projects[0].name, "TodoList");
   assert.equal(parsed.workspace.tasks[0].title, "Backup");
+  assert.deepEqual(parsed.workspace.tasks[0].attachments, []);
+  assert.deepEqual(parsed.managedFiles, []);
+});
+
+test("legacy backups remain readable and managed file keys can be remapped without changing metadata", async () => {
+  const { remapManagedFileStorageKeys } = await import("../src/workspace-backup.ts");
+  const legacy = createWorkspaceBackup(workspace());
+  legacy.schemaVersion = 1;
+  delete legacy.managedFiles;
+  const parsed = parseWorkspaceBackup(JSON.stringify(legacy));
+  assert.deepEqual(parsed.managedFiles, []);
+  parsed.workspace.tasks[0].attachments = [{ id: "f", originalName: "a.pdf", mediaType: "application/pdf", size: 2, storageKey: "attachments/old.pdf", addedAt: "now" }];
+  const remapped = remapManagedFileStorageKeys(parsed.workspace, [{ originalStorageKey: "attachments/old.pdf", newStorageKey: "attachments/new.pdf" }]);
+  assert.equal(remapped.tasks[0].attachments[0].storageKey, "attachments/new.pdf");
+  assert.equal(parsed.workspace.tasks[0].attachments[0].storageKey, "attachments/old.pdf");
 });
 
 test("TodoList backup rejects unsupported versions and malformed JSON", () => {

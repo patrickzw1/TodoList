@@ -7,6 +7,8 @@ description: Read, create, and safely update tasks in the local TodoList app thr
 
 Use the `todolist` MCP server as an optional bridge to the independent local TodoList app.
 
+The `todolist` server is for daily tasks in the installed app. The TodoList source repository also provides `todolist_dev`, which uses an independent development database. Use `todolist_dev` only when the user explicitly asks for development testing; never silently fall back between the two servers. If the requested server is unavailable, report that its integration needs configuring.
+
 ## Workflow
 
 1. Call `list_projects` when the target project id is unknown. If multiple projects are plausible, ask the user which one to use. Use `create_project` only when the user asked for a new project or clearly approved creating one.
@@ -17,6 +19,14 @@ Use the `todolist` MCP server as an optional bridge to the independent local Tod
 6. Read the changed task again when the result matters to the conversation.
 
 Acceptance criteria may be supplied as short strings when creating a task. When replacing criteria on an existing task, reuse the latest criterion `id`, `title`, and `completed` values for unchanged items so user confirmations are preserved. `list_tasks` excludes archived tasks unless `include_archived` is true, returns at most 50 tasks by default, and accepts a maximum `limit` of 100.
+
+## Attachments and images
+
+Task details have separate `attachments` and `images` collections. `get_task` and `list_tasks` return metadata: `id`, `originalName`, `mediaType`, `size`, `storageKey`, and `addedAt`. These results do not include file content, and `storageKey` is an internal reference, not a source path to open or upload.
+
+The user adds, removes, opens, and previews files in the desktop task-detail panel. The current MCP tools cannot upload, import, remove, or preview files. If asked to attach a file, explain this limit and direct the user to the desktop attachment or image section. Do not claim that writing a path or data URI in a task description attaches a file. Do not edit SQLite or the managed-file directory to bypass this limit.
+
+`update_task` automatically preserves existing attachments and images while updating supported task fields. Do not attempt to replace these collections through other fields.
 
 ## Conflict rules
 

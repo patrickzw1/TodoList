@@ -10,7 +10,7 @@ type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "latest" 
 function friendlyUpdateError(error: unknown) {
   const detail = error instanceof Error ? error.message : String(error);
   if (/endpoint|url|configuration|config/i.test(detail)) {
-    return "当前开发版尚未配置正式更新源。发布到 GitHub 后即可启用。";
+    return "当前构建未配置更新源。开发版请重新构建，日常使用请在安装版检查更新。";
   }
   return "检查更新失败，请确认网络连接后重试。";
 }
