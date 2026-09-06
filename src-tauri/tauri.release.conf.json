@@ -20,6 +20,12 @@
   },
   "bundle": {
     "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "template": "./windows/installer.nsi",
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
+    },
     "targets": [
       "nsis"
     ]

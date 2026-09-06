@@ -1,6 +1,6 @@
 [package]
 name = "todolist-desktop"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local-first TodoList desktop app with optional MCP integration"
 authors = ["TodoList contributors"]
 edition = "2021"
@@ -25,6 +25,7 @@ tauri-plugin-dialog = "2.7.3"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 task-core = { path = "../crates/task-core" }
 task-store-sqlite = { path = "../crates/task-store-sqlite" }
 toml_edit = "0.22"

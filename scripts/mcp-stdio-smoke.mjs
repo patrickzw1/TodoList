@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const tempDirectory = await mkdtemp(join(tmpdir(), "todolist-mcp-smoke-"));
+const appVersion = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
 const executableName = process.platform === "win32" ? "todolist-mcp.exe" : "todolist-mcp";
 const executable = process.env.TODOLIST_MCP_EXECUTABLE || join(process.cwd(), "target", "development", "release", executableName);
 const child = spawn(executable, [], {
@@ -55,7 +56,7 @@ try {
     params: {
       protocolVersion: "2025-06-18",
       capabilities: {},
-      clientInfo: { name: "todolist-smoke", version: "0.2.0" },
+      clientInfo: { name: "todolist-smoke", version: appVersion },
     },
   });
   const initialized = await waitFor(1);

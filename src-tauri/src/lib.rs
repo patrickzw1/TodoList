@@ -6,6 +6,7 @@ use tauri::Manager;
 mod backup;
 mod codex_integration;
 mod managed_files;
+mod update_recovery;
 pub mod window_actions;
 
 pub(crate) struct AppState {
@@ -49,7 +50,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                .installer_arg("/TODOLIST_AUTO_UPDATE=1")
+                .build(),
+        )
         .setup(|app| {
             if app.config().identifier != storage_path::APP_IDENTIFIER {
                 return Err(std::io::Error::other(
@@ -67,6 +72,9 @@ pub fn run() {
             fs::create_dir_all(&managed_files_root)?;
             if let Err(error) = store.cleanup_managed_files() {
                 eprintln!("Could not finish pending managed file cleanup: {error}");
+            }
+            if let Err(error) = update_recovery::cleanup_expired_update_attempts(app.handle()) {
+                eprintln!("Could not clean expired TodoList update attempts: {error}");
             }
             app.manage(AppState {
                 store,
@@ -89,7 +97,12 @@ pub fn run() {
             window_actions::open_sticky_window,
             codex_integration::codex_integration_status,
             codex_integration::configure_codex_integration,
-            codex_integration::remove_codex_integration
+            codex_integration::remove_codex_integration,
+            update_recovery::component_build_status,
+            update_recovery::update_recovery_status,
+            update_recovery::retry_update_installer,
+            update_recovery::open_update_installer_location,
+            update_recovery::discard_update_installer
         ])
         .run(tauri::generate_context!())
         .expect("failed to run TodoList");

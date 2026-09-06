@@ -1,6 +1,6 @@
 {
   "name": "todolist",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,8 +14,11 @@
     "preview": "vite preview",
     "test:mcp-stdio": "node scripts/mcp-stdio-smoke.mjs",
     "test:channels": "node --test tests/build-channels.test.mjs",
+    "test:installer-coordinator": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests/windows-updater-coordinator.test.ps1",
+    "test:installer-hooks": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/windows-nsis-hooks.test.ps1",
+    "test:installer-built": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests/windows-built-installer.test.ps1",
     "test:windows": "node --experimental-strip-types --test --test-concurrency=1 tests/window-actions.test.mjs",
-    "test:app": "node --experimental-strip-types --test --test-concurrency=1 tests/task-behavior.test.mjs tests/window-actions.test.mjs tests/workspace-actions.test.mjs tests/workspace-backup.test.mjs tests/workspace-store.test.mjs",
+    "test:app": "node --experimental-strip-types --test --test-concurrency=1 tests/task-behavior.test.mjs tests/update-status.test.mjs tests/window-actions.test.mjs tests/workspace-actions.test.mjs tests/workspace-backup.test.mjs tests/workspace-store.test.mjs",
     "test:sites": "node --test tests/sites-worker.test.mjs"
   },
   "dependencies": {

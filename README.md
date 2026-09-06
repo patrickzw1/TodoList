@@ -4,11 +4,11 @@
 
 ## Windows 下载
 
-在 [GitHub Releases](https://github.com/patrickzw1/TodoList/releases/latest) 下载 `TodoList_0.2.0_x64-setup.exe`。当前版本面向 Windows x64 日常试用，macOS 尚未提供安装包。
+在 [GitHub Releases](https://github.com/patrickzw1/TodoList/releases/latest) 下载 `TodoList_0.2.1_x64-setup.exe`。当前版本面向 Windows x64 日常试用，macOS 尚未提供安装包。
 
-新安装首次启动为空白任务库，不会自动写入演示项目或任务；升级会保留现有任务与托管文件。任务保存在本机，建议在设置中定期导出 JSON 备份。安装或升级前请退出 TodoList 和使用其 MCP 的 Codex，避免后台 sidecar 占用安装文件。
+新安装首次启动为空白任务库，不会自动写入演示项目或任务；升级会保留现有任务与托管文件。任务保存在本机，建议在设置中定期导出 JSON 备份。安装器只协调目标安装目录中的 TodoList GUI 与 MCP；升级时无需退出 Codex，也不会关闭开发版或其他安装目录中的同名进程。
 
-更新包使用 Tauri 签名校验；本阶段没有 Windows Authenticode 发布者签名，系统可能显示未知发布者提示。已知范围与验证记录见 [v0.2.0 发布说明](docs/RELEASE_NOTES_v0.2.0.md)。
+更新包使用 Tauri 签名校验；本阶段没有 Windows Authenticode 发布者签名，系统可能显示未知发布者提示。已知范围与验证记录见 [v0.2.1 发布说明](docs/RELEASE_NOTES_v0.2.1.md)。
 
 当前功能包含：
 

@@ -140,7 +140,7 @@ export function validateWorkspace(value: unknown): Workspace {
   return { version: integer(item.version, "任务库版本"), projects, tasks };
 }
 
-export function createWorkspaceBackup(workspace: Workspace, exportedAt = Math.floor(Date.now() / 1000), appVersion = "0.2.0"): WorkspaceBackup {
+export function createWorkspaceBackup(workspace: Workspace, exportedAt = Math.floor(Date.now() / 1000), appVersion = "0.2.1"): WorkspaceBackup {
   return {
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt,

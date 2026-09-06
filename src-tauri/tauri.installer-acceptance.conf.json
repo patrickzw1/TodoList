@@ -1,6 +1,6 @@
 {
-  "productName": "TodoList",
-  "identifier": "app.todolist.desktop",
+  "productName": "TodoList Installer Acceptance",
+  "identifier": "app.todolist.desktop.installer-acceptance",
   "build": {
     "features": ["production"],
     "beforeDevCommand": "npm run build:sidecar -- --production && npm run dev",
@@ -9,7 +9,7 @@
   "app": {
     "windows": [{
       "label": "main",
-      "title": "TodoList 任务台",
+      "title": "TodoList Installer Acceptance",
       "width": 1360,
       "height": 860,
       "minWidth": 960,
@@ -19,7 +19,8 @@
     }]
   },
   "bundle": {
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
+    "targets": ["nsis"],
     "windows": {
       "nsis": {
         "template": "./windows/installer.nsi",
@@ -29,13 +30,8 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
-      "endpoints": [
-        "https://github.com/OWNER/REPOSITORY/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
+      "pubkey": "",
+      "endpoints": []
     }
   }
 }
