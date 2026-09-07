@@ -56,13 +56,17 @@ test("Windows packaging replaces Tauri's name-wide process check with TodoList h
   assert.match(hooks, /-Mode Fail/);
   assert.match(hooks, /-Mode Cancel/);
   assert.match(hooks, /Sysnative\\WindowsPowerShell/);
-  assert.doesNotMatch(hooks, /ExecWait '\"\$SYSDIR\\WindowsPowerShell/);
+  assert.equal(hooks.match(/nsExec::ExecToLog/g)?.length, 6);
+  assert.doesNotMatch(hooks, /ExecWait/);
+  assert.match(hooks, /\$R0 != "0"[\s\S]*StrCpy \$R0 1/);
   assert.doesNotMatch(hooks, /MessageBox/);
   assert.doesNotMatch(hooks, /原版本已恢复/);
   assert.doesNotMatch(coordinator, /cmd\.exe|rmdir\s+\/s|Remove-Item[^\r\n]*-Recurse/i);
   assert.match(coordinator, /state\s*=\s*'committed'/);
   assert.match(coordinator, /Set-UpdateState 'installed'/);
   assert.match(coordinator, /NextState -eq 'installing'.*explorerOpened = \$false/);
+  assert.match(coordinator, /CreateNoWindow = \$true/);
+  assert.doesNotMatch(coordinator, /Start-Process[^\r\n]*WindowsPowerShell/);
 });
 
 test("production preparation cannot replace the development MCP binary", () => {

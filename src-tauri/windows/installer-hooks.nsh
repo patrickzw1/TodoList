@@ -35,6 +35,15 @@ Var TodoListPowerShell
   ${EndIf}
 !macroend
 
+!macro TodoListReadCoordinatorResult
+  Pop $R0
+  ; nsExec can return the strings "error" or "timeout". Normalize every
+  ; non-success value so later numeric checks cannot mistake it for exit code 0.
+  ${If} $R0 != "0"
+    StrCpy $R0 1
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   InitPluginsDir
   File "/oname=$PLUGINSDIR\todolist-install-coordinator.ps1" "${TODOLIST_HOOK_DIR}\install-coordinator.ps1"
@@ -44,7 +53,8 @@ Var TodoListPowerShell
   Delete "$TodoListFailureFile"
   !insertmacro TodoListResolveAutoUpdateFlag
   !insertmacro TodoListResolvePowerShell
-  ExecWait '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Prepare -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -StagedMain "$PLUGINSDIR\todolist-new-main.exe" -StagedMcp "$PLUGINSDIR\todolist-new-mcp.exe" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"' $R0
+  nsExec::ExecToLog '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Prepare -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -StagedMain "$PLUGINSDIR\todolist-new-main.exe" -StagedMcp "$PLUGINSDIR\todolist-new-mcp.exe" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"'
+  !insertmacro TodoListReadCoordinatorResult
   ${If} $R0 <> 0
     !insertmacro TodoListReadFailure
     Abort "$TodoListFailureReason"
@@ -54,7 +64,8 @@ Var TodoListPowerShell
 !macro NSIS_HOOK_POSTINSTALL
   Delete "$TodoListFailureFile"
   !insertmacro TodoListResolvePowerShell
-  ExecWait '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Verify -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"' $R0
+  nsExec::ExecToLog '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Verify -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"'
+  !insertmacro TodoListReadCoordinatorResult
   ${If} $R0 <> 0
     !insertmacro TodoListReadFailure
     Abort "$TodoListFailureReason"
@@ -65,7 +76,8 @@ Var TodoListPowerShell
   System::Call 'kernel32::GetCurrentProcessId() i .r7'
   Delete "$TodoListFailureFile"
   !insertmacro TodoListResolvePowerShell
-  ExecWait '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Commit -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile" -InstallerPid $7' $R0
+  nsExec::ExecToLog '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Commit -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile" -InstallerPid $7'
+  !insertmacro TodoListReadCoordinatorResult
   ${If} $R0 <> 0
     !insertmacro TodoListReadFailure
     ; Automatic and silent updates report through the retained installer,
@@ -82,7 +94,8 @@ Var TodoListPowerShell
   StrCpy $TodoListFailureFile "$PLUGINSDIR\todolist-install-error.txt"
   !insertmacro TodoListResolveAutoUpdateFlag
   !insertmacro TodoListResolvePowerShell
-  ExecWait '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Fail -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"' $R0
+  nsExec::ExecToLog '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Fail -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"'
+  !insertmacro TodoListReadCoordinatorResult
 !macroend
 
 !macro TODOLIST_HOOK_USERABORT
@@ -91,7 +104,8 @@ Var TodoListPowerShell
   StrCpy $TodoListFailureFile "$PLUGINSDIR\todolist-install-error.txt"
   !insertmacro TodoListResolveAutoUpdateFlag
   !insertmacro TodoListResolvePowerShell
-  ExecWait '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Cancel -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"' $R0
+  nsExec::ExecToLog '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode Cancel -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -InstallerPath "$EXEPATH" -AutoUpdateFlag "$TodoListAutoUpdateFlag" -ErrorFile "$TodoListFailureFile"'
+  !insertmacro TodoListReadCoordinatorResult
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -100,7 +114,8 @@ Var TodoListPowerShell
   StrCpy $TodoListFailureFile "$PLUGINSDIR\todolist-install-error.txt"
   Delete "$TodoListFailureFile"
   !insertmacro TodoListResolvePowerShell
-  ExecWait '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode StopOnly -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -ErrorFile "$TodoListFailureFile"' $R0
+  nsExec::ExecToLog '"$TodoListPowerShell" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\todolist-install-coordinator.ps1" -Mode StopOnly -InstallDir "$INSTDIR" -MainName "${MAINBINARYNAME}.exe" -Version "${VERSION}" -ExpectedBuild "todolist/${VERSION}/production" -ProductName "${PRODUCTNAME}" -BundleId "${BUNDLEID}" -ErrorFile "$TodoListFailureFile"'
+  !insertmacro TodoListReadCoordinatorResult
   ${If} $R0 <> 0
     !insertmacro TodoListReadFailure
     Abort "$TodoListFailureReason"

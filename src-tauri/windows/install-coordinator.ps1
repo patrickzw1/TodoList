@@ -509,7 +509,15 @@ function Invoke-Commit {
             Copy-Item -LiteralPath $PSCommandPath -Destination $cleanupScript
             $invoke = "& '" + $cleanupScript.Replace("'", "''") + "' -Mode Cleanup -InstallDir '" + $installRoot.Replace("'", "''") + "' -MainName '" + $MainName.Replace("'", "''") + "' -Version '" + $Version.Replace("'", "''") + "' -ExpectedBuild '" + $ExpectedBuild.Replace("'", "''") + "' -ProductName '" + $ProductName.Replace("'", "''") + "' -BundleId '" + $BundleId.Replace("'", "''") + "' -InstallerPath '" + $InstallerPath.Replace("'", "''") + "' -AutoUpdateFlag 'owned' -InstallerPid " + $InstallerPid
             $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invoke))
-            Start-Process -FilePath (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') -WindowStyle Hidden -ArgumentList "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+            $startInfo = [Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+            $cleanupProcess = [Diagnostics.Process]::Start($startInfo)
+            if (-not $cleanupProcess) { throw '无法启动后台清理进程。' }
+            $cleanupProcess.Dispose()
             Write-TestTrace "helper-started|root=$cleanupRoot|installerPid=$InstallerPid"
             $cleanupRoot = $null
         } catch {

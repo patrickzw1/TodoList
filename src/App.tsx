@@ -6,6 +6,7 @@ import { isTauri, invoke } from "@tauri-apps/api/core";
 import { FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Task, TaskStatus, Workspace } from "./types";
 import { CodexIntegrationCard, readCodexIntegrationStatus, type CodexIntegrationStatus } from "./CodexIntegrationCard";
+import { sidebarCodexIntegrationPresentation } from "./codex-integration-presentation";
 import { DataBackupCard } from "./DataBackupCard";
 import { TaskFileSections } from "./TaskFiles";
 import { SoftwareUpdateCard, SoftwareUpdateProvider, useSoftwareUpdate } from "./SoftwareUpdateCard";
@@ -83,19 +84,7 @@ function Sidebar({ projects, view, currentVersion, updateAvailable, storageState
   projects: Project[]; view: View; currentVersion: string; updateAvailable: boolean; storageState: StorageState; storageMessage: string; integrationStatus: CodexIntegrationStatus | null; integrationError: string; openingSticky: boolean; onOpenSticky: () => void; onView: (view: View) => void; onCreate: () => void; onCreateProject: () => void; onEditProject: (projectId: string) => void;
 }) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
-  const integrationCopy = integrationError
-    ? { state: "error", label: "Codex 集成状态读取失败" }
-    : integrationStatus?.state === "development"
-      ? { state: "development", label: "开发 MCP · todolist_dev" }
-      : integrationStatus?.state === "configured"
-        ? { state: "configured", label: "Codex 集成已配置" }
-        : integrationStatus?.state === "partial"
-          ? { state: "partial", label: "Codex 集成待修复" }
-          : integrationStatus?.state === "conflict"
-            ? { state: "conflict", label: "Codex 集成存在冲突" }
-            : integrationStatus
-              ? { state: "not-configured", label: integrationStatus.canConfigure ? "Codex 集成未配置" : "网页预览 · 集成不可用" }
-              : { state: "checking", label: "正在检查 Codex 集成" };
+  const integrationCopy = sidebarCodexIntegrationPresentation(integrationStatus, integrationError);
   return (
     <aside className="sidebar">
       <div className="brand"><CheckCircle weight="bold" /><span>任务台</span></div>

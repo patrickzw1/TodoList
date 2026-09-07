@@ -61,6 +61,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .mcp-state { color: #7c838d; }
 .mcp-state svg { width: 15px; }
 .mcp-state.configured { color: #167a4b; }
+.mcp-state.update-available { color: #326bb8; }
 .mcp-state.partial { color: #8a6320; }
 .mcp-state.conflict, .mcp-state.error { color: #a64349; }
 
@@ -350,6 +351,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .integration-heading span { color: #747b85; font-size: 12px; }
 .integration-badge { flex: 0 0 auto; padding: 5px 8px; border-radius: 5px; background: #f1f3f5; }
 .integration-badge.state-configured { color: #167a4b; background: #eaf8f1; }
+.integration-card.state-update_available { border-color: #b9d0ef; box-shadow: 0 0 0 3px #edf4ff; }
+.integration-badge.state-update_available { color: #326bb8; background: #eaf2ff; }
 .integration-badge.state-conflict { color: #a64349; background: #fff0f1; }
 .integration-badge.state-partial { color: #8a6320; background: #fff7e5; }
 .integration-paths { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; padding: 12px; border-radius: 7px; background: #f7f8fa; }
@@ -365,6 +368,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .integration-actions .integration-primary, .integration-confirm .integration-primary { border-color: var(--blue); color: #fff; background: var(--blue); }
 .integration-warning { display: flex; align-items: flex-start; gap: 7px; margin: 10px 0; padding: 9px 10px; border-radius: 6px; color: #9d454a; background: #fff2f3; font-size: 11px; line-height: 1.5; }
 .integration-warning svg { flex: 0 0 16px; width: 16px; height: 16px; }
+.integration-success { display: flex; align-items: flex-start; gap: 7px; margin: 10px 0; padding: 9px 10px; border-radius: 6px; color: #167a4b; background: #eaf8f1; font-size: 11px; line-height: 1.5; }
+.integration-success svg { flex: 0 0 16px; width: 16px; height: 16px; }
 .integration-confirm { position: relative; padding: 13px; border-radius: 7px; background: var(--blue-soft); }
 .integration-confirm > .icon-button { position: absolute; top: 8px; right: 8px; width: 28px; padding: 0; border: 0; background: transparent; }
 .integration-confirm strong { display: block; padding-right: 30px; font-size: 12px; }

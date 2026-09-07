@@ -12,6 +12,14 @@ use toml_edit::{value, Array, DocumentMut, Item, Table};
 const SKILL_CONTENT: &str = include_str!("../../.agents/skills/todolist-mcp/SKILL.md");
 const MANAGED_MARKER: &str = "app.todolist.desktop\n";
 const MANAGED_COMMAND_FILE: &str = ".todolist-command";
+const LEGACY_MCP_TOOLS: [&str; 6] = [
+    "list_projects",
+    "create_project",
+    "list_tasks",
+    "get_task",
+    "create_task",
+    "update_task",
+];
 const MCP_TOOLS: [&str; 7] = [
     "list_projects",
     "create_project",
@@ -33,8 +41,17 @@ struct IntegrationPaths {
 struct SkillState {
     exists: bool,
     managed: bool,
+    skill_file_exists: bool,
     current: bool,
     managed_command: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ConfigChange {
+    None,
+    Created,
+    AddedReorderTool,
+    MigratedCommand,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,6 +61,10 @@ pub struct CodexIntegrationStatus {
     configured: bool,
     can_configure: bool,
     managed_migration: bool,
+    reason: String,
+    pending_updates: Vec<String>,
+    action_result: String,
+    updated_items: Vec<String>,
     config_path: String,
     skill_path: String,
     mcp_command: String,
@@ -115,23 +136,54 @@ fn configured_server_exists(document: &DocumentMut) -> bool {
         .is_some_and(|servers| servers.contains_key("todolist"))
 }
 
-fn configured_tools_current(document: &DocumentMut) -> bool {
-    let Some(tools) = document
+fn configured_tools_item(document: &DocumentMut) -> Option<&Item> {
+    document
         .as_table()
-        .get("mcp_servers")
-        .and_then(Item::as_table)
-        .and_then(|servers| servers.get("todolist"))
-        .and_then(Item::as_table)
-        .and_then(|server| server.get("enabled_tools"))
-        .and_then(Item::as_array)
-    else {
+        .get("mcp_servers")?
+        .as_table()?
+        .get("todolist")?
+        .as_table()?
+        .get("enabled_tools")
+}
+
+fn configured_tools_valid(document: &DocumentMut) -> bool {
+    let Some(item) = configured_tools_item(document) else {
+        return true;
+    };
+    let Some(tools) = item.as_array() else {
         return false;
     };
-    tools.len() == MCP_TOOLS.len()
-        && tools
-            .iter()
-            .zip(MCP_TOOLS)
-            .all(|(configured, expected)| configured.as_str() == Some(expected))
+    let mut configured_tools = Vec::with_capacity(tools.len());
+    for tool in tools.iter() {
+        let Some(tool) = tool.as_str() else {
+            return false;
+        };
+        if configured_tools.contains(&tool) {
+            return false;
+        }
+        configured_tools.push(tool);
+    }
+    true
+}
+
+fn configured_tools_match(document: &DocumentMut, expected_tools: &[&str]) -> bool {
+    let Some(tools) = configured_tools_item(document).and_then(Item::as_array) else {
+        return false;
+    };
+    tools.len() == expected_tools.len()
+        && expected_tools.iter().all(|expected| {
+            tools
+                .iter()
+                .any(|configured| configured.as_str() == Some(expected))
+        })
+}
+
+fn configured_tools_current(document: &DocumentMut) -> bool {
+    configured_tools_match(document, &MCP_TOOLS)
+}
+
+fn configured_tools_legacy(document: &DocumentMut) -> bool {
+    configured_tools_match(document, &LEGACY_MCP_TOOLS)
 }
 
 fn enabled_tools_value() -> toml_edit::Value {
@@ -166,11 +218,14 @@ fn skill_state(paths: &IntegrationPaths) -> Result<SkillState, String> {
     }
     let marker_matches = fs::read_to_string(paths.skill_directory.join(".todolist-managed"))
         .is_ok_and(|content| content == MANAGED_MARKER);
-    let skill_matches = fs::read_to_string(paths.skill_directory.join("SKILL.md"))
-        .is_ok_and(|content| content == SKILL_CONTENT);
+    let skill_path = paths.skill_directory.join("SKILL.md");
+    let skill_file_exists = skill_path.is_file();
+    let skill_matches =
+        fs::read_to_string(&skill_path).is_ok_and(|content| content == SKILL_CONTENT);
     Ok(SkillState {
         exists: true,
         managed: marker_matches,
+        skill_file_exists,
         current: marker_matches && skill_matches,
         managed_command: marker_matches
             .then(|| read_managed_command(&paths.skill_directory.join(MANAGED_COMMAND_FILE)))
@@ -220,42 +275,125 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
     let command = configured_command(&document);
     let expected_command = display_path(&paths.mcp_executable);
     let command_matches = command.is_some_and(|item| item == expected_command);
-    let config_matches = command_matches && configured_tools_current(&document);
     let config_exists = configured_server_exists(&document);
     let skill = skill_state(paths)?;
     let managed_migration = command
         .is_some_and(|item| !command_matches && is_managed_previous_command(paths, &skill, item));
+    let current_tools = command_matches
+        && (configured_tools_item(&document).is_none() || configured_tools_current(&document));
+    let managed_legacy_tools = command_matches
+        && skill.managed
+        && skill.skill_file_exists
+        && !skill.current
+        && configured_tools_legacy(&document);
+    let skill_update_available =
+        command_matches && skill.managed && skill.skill_file_exists && !skill.current;
 
-    let (state, configured, can_configure, message) = if config_matches && skill.current {
+    let (state, configured, can_configure, reason, message, pending_updates) = if managed_migration
+    {
         (
-            "configured",
-            true,
-            true,
-            "当前 TodoList 安装已配置 Codex 集成",
-        )
-    } else if managed_migration {
-        (
-            "partial",
-            false,
-            true,
-            "检测到由 TodoList 管理的旧路径，可以迁移到当前安装",
-        )
-    } else if (config_exists && !command_matches) || (skill.exists && !skill.managed) {
+                "partial",
+                false,
+                true,
+                "path_migration",
+                "检测到 TodoList 管理的旧安装路径，需要迁移 MCP 命令；工具权限与其他 Codex 配置将保持不变。",
+                Vec::new(),
+            )
+    } else if config_exists && !command_matches {
         (
             "conflict",
             false,
             false,
-            "检测到不属于当前安装的 TodoList 集成，已保持原样",
+            "unknown_config",
+            "检测到未知或不属于当前安装的 TodoList MCP 配置，已保持原样。",
+            Vec::new(),
         )
-    } else if config_exists || skill.exists {
+    } else if skill.exists && !skill.managed {
+        (
+            "conflict",
+            false,
+            false,
+            "unmanaged_skill",
+            "检测到不属于 TodoList 管理的同名 Skill，已保持原样。",
+            Vec::new(),
+        )
+    } else if command_matches && !configured_tools_valid(&document) {
+        (
+            "partial",
+            false,
+            false,
+            "invalid_tools",
+            "TodoList enabled_tools 配置无效：该字段必须是无重复字符串数组；已保持原样。",
+            Vec::new(),
+        )
+    } else if command_matches && (!skill.exists || !skill.skill_file_exists) {
         (
             "partial",
             false,
             true,
-            "TodoList 集成配置不完整，可以安全修复",
+            "missing_skill",
+            "缺少 TodoList 管理的 Skill 文件，需要重新配置；现有 MCP 工具权限将保持不变。",
+            Vec::new(),
+        )
+    } else if skill_update_available || managed_legacy_tools {
+        let mut updates = Vec::new();
+        if skill_update_available {
+            updates.push("新版使用说明".to_string());
+        }
+        if managed_legacy_tools {
+            updates.push("工具列表（新增 reorder_tasks）".to_string());
+        }
+        let message = if managed_legacy_tools {
+            "安装路径未变，需要同步新版使用说明和工具列表。"
+        } else {
+            "安装路径未变，需要同步新版使用说明。"
+        };
+        (
+            "update_available",
+            false,
+            true,
+            "managed_update",
+            message,
+            updates,
+        )
+    } else if command_matches && skill.current {
+        if current_tools {
+            (
+                "configured",
+                true,
+                true,
+                "up_to_date",
+                "TodoList 的磁盘配置已同步；这不代表 Codex 当前连接状态。",
+                Vec::new(),
+            )
+        } else {
+            (
+                "configured",
+                true,
+                true,
+                "custom_tools",
+                "TodoList 的磁盘配置已同步，并保留了自定义工具权限；这不代表 Codex 当前连接状态。",
+                Vec::new(),
+            )
+        }
+    } else if skill.exists && !config_exists {
+        (
+            "partial",
+            false,
+            true,
+            "missing_config",
+            "缺少 TodoList MCP 注册，需要重新配置；其他 Codex 配置将保持不变。",
+            Vec::new(),
         )
     } else {
-        ("not_configured", false, true, "尚未配置 Codex 集成")
+        (
+            "not_configured",
+            false,
+            true,
+            "not_configured",
+            "尚未配置 Codex 集成。",
+            Vec::new(),
+        )
     };
 
     Ok(CodexIntegrationStatus {
@@ -263,6 +401,10 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
         configured,
         can_configure,
         managed_migration,
+        reason: reason.to_string(),
+        pending_updates,
+        action_result: String::new(),
+        updated_items: Vec::new(),
         config_path: display_path(&paths.codex_config),
         skill_path: display_path(&paths.skill_directory),
         mcp_command: expected_command,
@@ -321,26 +463,33 @@ fn install_skill(paths: &IntegrationPaths) -> Result<(), String> {
     )
 }
 
-fn install_config(paths: &IntegrationPaths) -> Result<(), String> {
+fn install_config(
+    paths: &IntegrationPaths,
+    update_managed_legacy_tools: bool,
+) -> Result<ConfigChange, String> {
     let mut document = read_document(&paths.codex_config)?;
     let expected_command = display_path(&paths.mcp_executable);
     if let Some(command) = configured_command(&document).map(str::to_string) {
         if command == expected_command {
-            if configured_tools_current(&document) {
-                return Ok(());
+            if !update_managed_legacy_tools || !configured_tools_legacy(&document) {
+                return Ok(ConfigChange::None);
             }
-            document["mcp_servers"]["todolist"]["enabled_tools"] = value(enabled_tools_value());
+            document["mcp_servers"]["todolist"]["enabled_tools"]
+                .as_array_mut()
+                .ok_or_else(|| "TodoList enabled_tools setting is not an array".to_string())?
+                .push("reorder_tasks");
             backup_file(&paths.codex_config)?;
-            return atomic_write(&paths.codex_config, &document.to_string());
+            atomic_write(&paths.codex_config, &document.to_string())?;
+            return Ok(ConfigChange::AddedReorderTool);
         }
         let skill = skill_state(paths)?;
         if !is_managed_previous_command(paths, &skill, &command) {
             return Err("A different TodoList MCP server is already configured".to_string());
         }
         document["mcp_servers"]["todolist"]["command"] = value(expected_command);
-        document["mcp_servers"]["todolist"]["enabled_tools"] = value(enabled_tools_value());
         backup_file(&paths.codex_config)?;
-        return atomic_write(&paths.codex_config, &document.to_string());
+        atomic_write(&paths.codex_config, &document.to_string())?;
+        return Ok(ConfigChange::MigratedCommand);
     }
     if configured_server_exists(&document) {
         return Err("An unrecognized TodoList MCP configuration already exists".to_string());
@@ -362,7 +511,8 @@ fn install_config(paths: &IntegrationPaths) -> Result<(), String> {
     servers.insert("todolist", Item::Table(server));
 
     backup_file(&paths.codex_config)?;
-    atomic_write(&paths.codex_config, &document.to_string())
+    atomic_write(&paths.codex_config, &document.to_string())?;
+    Ok(ConfigChange::Created)
 }
 
 fn write_managed_command(paths: &IntegrationPaths) -> Result<(), String> {
@@ -430,6 +580,10 @@ pub fn codex_integration_status() -> Result<CodexIntegrationStatus, String> {
             configured: false,
             can_configure: false,
             managed_migration: false,
+            reason: "development".into(),
+            pending_updates: Vec::new(),
+            action_result: String::new(),
+            updated_items: Vec::new(),
             config_path: display_path(&root.join(".codex/config.toml")),
             skill_path: display_path(&root.join(".agents/skills/todolist-mcp")),
             mcp_command: display_path(&root.join("scripts/start-mcp.mjs")),
@@ -451,17 +605,68 @@ fn require_production_integration() -> Result<(), String> {
 pub fn configure_codex_integration() -> Result<CodexIntegrationStatus, String> {
     require_production_integration()?;
     let paths = user_paths()?;
+    configure(&paths)
+}
+
+fn configure(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
     if !paths.mcp_executable.is_file() {
         return Err("TodoList MCP executable is missing".to_string());
     }
-    let status = inspect(&paths)?;
-    if !status.can_configure {
-        return Err(status.message);
+    let before = inspect(paths)?;
+    if !before.can_configure {
+        return Err(before.message);
     }
-    install_skill(&paths)?;
-    install_config(&paths)?;
-    write_managed_command(&paths)?;
-    inspect(&paths)
+
+    let mut updated_items = Vec::new();
+    let action_result = if before.managed_migration {
+        match install_config(paths, false).map_err(|error| format!("迁移 MCP 路径失败：{error}"))?
+        {
+            ConfigChange::MigratedCommand => updated_items.push("MCP 安装路径".to_string()),
+            _ => {
+                return Err("TodoList managed path migration did not change the MCP command".into())
+            }
+        }
+        write_managed_command(paths)
+            .map_err(|error| format!("记录 TodoList 托管路径失败：{error}"))?;
+        "migrated"
+    } else {
+        let skill_before = skill_state(paths)?;
+        let update_managed_legacy_tools = before
+            .pending_updates
+            .iter()
+            .any(|item| item.contains("reorder_tasks"));
+        let config_change = install_config(paths, update_managed_legacy_tools)
+            .map_err(|error| format!("写入 Codex MCP 配置失败：{error}"))?;
+        install_skill(paths).map_err(|error| format!("写入 TodoList Skill 失败：{error}"))?;
+
+        if !skill_before.exists || !skill_before.skill_file_exists {
+            updated_items.push("TodoList Skill".to_string());
+        } else if !skill_before.current {
+            updated_items.push("新版使用说明".to_string());
+        }
+        match config_change {
+            ConfigChange::Created => updated_items.push("MCP 注册".to_string()),
+            ConfigChange::AddedReorderTool => {
+                updated_items.push("工具列表（新增 reorder_tasks）".to_string())
+            }
+            ConfigChange::MigratedCommand => {
+                return Err("TodoList MCP path changed while configuring the integration".into())
+            }
+            ConfigChange::None => {}
+        }
+        write_managed_command(paths)
+            .map_err(|error| format!("记录 TodoList 托管路径失败：{error}"))?;
+        if before.state == "update_available" {
+            "updated"
+        } else {
+            "configured"
+        }
+    };
+
+    let mut after = inspect(paths)?;
+    after.action_result = action_result.to_string();
+    after.updated_items = updated_items;
+    Ok(after)
 }
 
 #[tauri::command]
@@ -470,7 +675,10 @@ pub fn remove_codex_integration() -> Result<CodexIntegrationStatus, String> {
     let paths = user_paths()?;
     remove_config(&paths)?;
     remove_skill(&paths)?;
-    inspect(&paths)
+    let mut status = inspect(&paths)?;
+    status.action_result = "removed".into();
+    status.updated_items = vec!["TodoList MCP 注册与托管 Skill".into()];
+    Ok(status)
 }
 
 #[cfg(test)]
@@ -517,7 +725,7 @@ mod tests {
         .unwrap();
 
         install_skill(&paths).unwrap();
-        install_config(&paths).unwrap();
+        install_config(&paths, false).unwrap();
         write_managed_command(&paths).unwrap();
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
         assert!(configured.contains("theme = \"dark\""));
@@ -541,6 +749,11 @@ mod tests {
         let paths = test_paths(root.path());
         fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
         install_skill(&paths).unwrap();
+        fs::write(
+            paths.skill_directory.join("SKILL.md"),
+            "old managed version",
+        )
+        .unwrap();
         write_managed_command(&paths).unwrap();
         fs::write(
             &paths.codex_config,
@@ -552,10 +765,18 @@ mod tests {
         .unwrap();
 
         let outdated = inspect(&paths).unwrap();
-        assert_eq!(outdated.state, "partial");
+        assert_eq!(outdated.state, "update_available");
+        assert_eq!(outdated.reason, "managed_update");
+        assert!(outdated.message.contains("安装路径未变"));
+        assert_eq!(outdated.pending_updates.len(), 2);
         assert!(outdated.can_configure);
 
-        install_config(&paths).unwrap();
+        let updated = configure(&paths).unwrap();
+        assert_eq!(updated.action_result, "updated");
+        assert_eq!(
+            updated.updated_items,
+            vec!["新版使用说明", "工具列表（新增 reorder_tasks）"]
+        );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
         assert!(configured.contains("theme = \"dark\""));
         assert!(configured.contains("[mcp_servers.existing]"));
@@ -565,6 +786,165 @@ mod tests {
             &configured.parse::<DocumentMut>().unwrap()
         ));
         assert!(inspect(&paths).unwrap().configured);
+    }
+
+    #[test]
+    fn treats_a_reordered_complete_tool_list_as_current() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        install_skill(&paths).unwrap();
+        write_managed_command(&paths).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+
+        let status = inspect(&paths).unwrap();
+        assert_eq!(status.state, "configured");
+        assert_eq!(status.reason, "up_to_date");
+        assert!(configured_tools_current(
+            &read_document(&paths.codex_config).unwrap()
+        ));
+    }
+
+    #[test]
+    fn preserves_a_user_restricted_tool_list() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        install_skill(&paths).unwrap();
+        write_managed_command(&paths).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"list_projects\", \"create_project\", \"list_tasks\", \"get_task\", \"create_task\", \"update_task\"]\ncustom_setting = \"keep\"\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+        let before = fs::read_to_string(&paths.codex_config).unwrap();
+
+        let status = inspect(&paths).unwrap();
+        assert_eq!(status.state, "configured");
+        assert_eq!(status.reason, "custom_tools");
+        assert!(status.message.contains("自定义工具权限"));
+        assert_eq!(install_config(&paths, false).unwrap(), ConfigChange::None);
+        let after = fs::read_to_string(&paths.codex_config).unwrap();
+        assert_eq!(after, before);
+        assert!(!after.contains("reorder_tasks"));
+    }
+
+    #[test]
+    fn treats_absent_tool_permissions_as_the_default() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        install_skill(&paths).unwrap();
+        write_managed_command(&paths).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.todolist]\ncommand = {:?}\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+
+        let status = inspect(&paths).unwrap();
+        assert_eq!(status.state, "configured");
+        assert_eq!(status.reason, "up_to_date");
+    }
+
+    #[test]
+    fn rejects_structurally_invalid_tool_permissions_without_writing() {
+        for enabled_tools in [
+            "\"bad\"",
+            "[\"list_projects\", 1]",
+            "[\"list_projects\", \"list_projects\"]",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = test_paths(root.path());
+            fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+            install_skill(&paths).unwrap();
+            write_managed_command(&paths).unwrap();
+            fs::write(
+                &paths.codex_config,
+                format!(
+                    "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = {enabled_tools}\n",
+                    display_path(&paths.mcp_executable)
+                ),
+            )
+            .unwrap();
+            let before = fs::read_to_string(&paths.codex_config).unwrap();
+
+            let status = inspect(&paths).unwrap();
+            assert_eq!(status.state, "partial");
+            assert_eq!(status.reason, "invalid_tools");
+            assert!(!status.configured);
+            assert!(!status.can_configure);
+            assert!(configure(&paths).is_err());
+            assert_eq!(fs::read_to_string(&paths.codex_config).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn reports_missing_and_unmanaged_components_separately() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        let empty = inspect(&paths).unwrap();
+        assert_eq!(empty.state, "not_configured");
+        assert_eq!(empty.reason, "not_configured");
+
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"list_projects\"]\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+        let missing_skill = inspect(&paths).unwrap();
+        assert_eq!(missing_skill.state, "partial");
+        assert_eq!(missing_skill.reason, "missing_skill");
+
+        fs::create_dir_all(&paths.skill_directory).unwrap();
+        fs::write(
+            paths.skill_directory.join(".todolist-managed"),
+            MANAGED_MARKER,
+        )
+        .unwrap();
+        let missing_skill_file = inspect(&paths).unwrap();
+        assert_eq!(missing_skill_file.state, "partial");
+        assert_eq!(missing_skill_file.reason, "missing_skill");
+        assert!(!missing_skill_file.message.contains("新版"));
+
+        fs::remove_dir_all(&paths.skill_directory).unwrap();
+        fs::remove_file(&paths.codex_config).unwrap();
+        install_skill(&paths).unwrap();
+        let missing_config = inspect(&paths).unwrap();
+        assert_eq!(missing_config.state, "partial");
+        assert_eq!(missing_config.reason, "missing_config");
+    }
+
+    #[test]
+    fn returns_a_write_error_from_an_isolated_invalid_config_parent() {
+        let root = tempfile::tempdir().unwrap();
+        let mut paths = test_paths(root.path());
+        let blocked_parent = root.path().join("blocked-config-parent");
+        fs::write(&blocked_parent, "not a directory").unwrap();
+        paths.codex_config = blocked_parent.join("config.toml");
+
+        let error = configure(&paths).unwrap_err();
+        assert!(error.contains("写入 Codex MCP 配置失败"));
+        assert!(!paths.codex_config.exists());
+        assert!(!paths.skill_directory.exists());
+        assert_eq!(inspect(&paths).unwrap().state, "not_configured");
     }
 
     #[test]
@@ -581,7 +961,7 @@ mod tests {
             "[mcp_servers.todolist]\ncommand = \"other-server\"\n",
         )
         .unwrap();
-        assert!(install_config(&paths).is_err());
+        assert!(install_config(&paths, false).is_err());
         assert_eq!(
             fs::read_to_string(paths.skill_directory.join("SKILL.md")).unwrap(),
             "user content"
@@ -632,7 +1012,7 @@ mod tests {
         let old_paths = test_paths(root.path());
         fs::create_dir_all(old_paths.codex_config.parent().unwrap()).unwrap();
         install_skill(&old_paths).unwrap();
-        install_config(&old_paths).unwrap();
+        install_config(&old_paths, false).unwrap();
         write_managed_command(&old_paths).unwrap();
 
         let new_directory = root.path().join("new-install");
@@ -648,8 +1028,16 @@ mod tests {
         assert!(migration.managed_migration);
         assert!(migration.can_configure);
 
-        install_config(&new_paths).unwrap();
-        write_managed_command(&new_paths).unwrap();
+        let before_config = fs::read_to_string(&new_paths.codex_config).unwrap();
+        let migrated = configure(&new_paths).unwrap();
+        assert_eq!(migrated.action_result, "migrated");
+        assert_eq!(migrated.updated_items, vec!["MCP 安装路径"]);
+        let after_config = fs::read_to_string(&new_paths.codex_config).unwrap();
+        assert!(after_config.contains("enabled_tools"));
+        assert_eq!(
+            before_config.matches("reorder_tasks").count(),
+            after_config.matches("reorder_tasks").count()
+        );
         assert!(inspect(&new_paths).unwrap().configured);
         let expected_command = display_path(&new_paths.mcp_executable);
         let document = read_document(&new_paths.codex_config).unwrap();
@@ -665,7 +1053,7 @@ mod tests {
         let old_paths = test_paths(root.path());
         fs::create_dir_all(old_paths.codex_config.parent().unwrap()).unwrap();
         install_skill(&old_paths).unwrap();
-        install_config(&old_paths).unwrap();
+        install_config(&old_paths, false).unwrap();
 
         let new_directory = root.path().join("new-install");
         fs::create_dir_all(&new_directory).unwrap();
@@ -678,8 +1066,7 @@ mod tests {
 
         let migration = inspect(&new_paths).unwrap();
         assert!(migration.managed_migration);
-        install_config(&new_paths).unwrap();
-        write_managed_command(&new_paths).unwrap();
+        configure(&new_paths).unwrap();
         assert!(inspect(&new_paths).unwrap().configured);
     }
 
@@ -689,7 +1076,7 @@ mod tests {
         let paths = test_paths(root.path());
         fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
         install_skill(&paths).unwrap();
-        install_config(&paths).unwrap();
+        install_config(&paths, false).unwrap();
         write_managed_command(&paths).unwrap();
         fs::write(
             &paths.codex_config,
@@ -699,7 +1086,8 @@ mod tests {
 
         let conflict = inspect(&paths).unwrap();
         assert_eq!(conflict.state, "conflict");
+        assert_eq!(conflict.reason, "unknown_config");
         assert!(!conflict.can_configure);
-        assert!(install_config(&paths).is_err());
+        assert!(install_config(&paths, false).is_err());
     }
 }
