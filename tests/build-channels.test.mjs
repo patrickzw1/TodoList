@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 test("development and production packaging select matching application and sidecar channels", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url)));
   const development = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url)));
   const production = JSON.parse(await readFile(new URL("../src-tauri/tauri.release.conf.json", import.meta.url)));
   const example = JSON.parse(await readFile(new URL("../src-tauri/tauri.release.conf.example.json", import.meta.url)));
@@ -30,8 +31,15 @@ test("development and production packaging select matching application and sidec
   assert.equal(installerAcceptance.bundle.createUpdaterArtifacts, false);
   assert.ok(installerAcceptance.build.features.includes("production"));
   const projectConfig = await readFile(new URL("../.codex/config.toml", import.meta.url), "utf8");
+  const viteConfig = await readFile(new URL("../vite.config.mjs", import.meta.url), "utf8");
+  const updateCard = await readFile(new URL("../src/SoftwareUpdateCard.tsx", import.meta.url), "utf8");
   assert.match(projectConfig, /\[mcp_servers\.todolist_dev\]/);
   assert.doesNotMatch(projectConfig, /\[mcp_servers\.todolist\]/);
+  assert.match(projectConfig, /"reorder_tasks"/);
+  assert.match(viteConfig, /readFileSync\(new URL\("\.\/package\.json"/);
+  assert.match(viteConfig, /__APP_VERSION__/);
+  assert.equal(packageJson.version, development.version);
+  assert.doesNotMatch(updateCard, /useState\("0\.1\.0"\)/);
 });
 
 test("Windows packaging replaces Tauri's name-wide process check with TodoList hooks", async () => {

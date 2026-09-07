@@ -4,11 +4,11 @@
 
 ## Windows 下载
 
-在 [GitHub Releases](https://github.com/patrickzw1/TodoList/releases/latest) 下载 `TodoList_0.2.2_x64-setup.exe`。当前版本面向 Windows x64 日常试用，macOS 尚未提供安装包。
+在 [GitHub Releases](https://github.com/patrickzw1/TodoList/releases/latest) 下载 `TodoList_0.2.3_x64-setup.exe`。当前版本面向 Windows x64 日常试用，macOS 尚未提供安装包。
 
 新安装首次启动为空白任务库，不会自动写入演示项目或任务；升级会保留现有任务与托管文件。任务保存在本机，建议在设置中定期导出 JSON 备份。安装器只协调目标安装目录中的 TodoList GUI 与 MCP；升级时无需退出 Codex，也不会关闭开发版或其他安装目录中的同名进程。
 
-更新包使用 Tauri 签名校验；本阶段没有 Windows Authenticode 发布者签名，系统可能显示未知发布者提示。已知范围与验证记录见 [v0.2.2 发布说明](docs/RELEASE_NOTES_v0.2.2.md)。
+更新包使用 Tauri 签名校验；本阶段没有 Windows Authenticode 发布者签名，系统可能显示未知发布者提示。已知范围与验证记录见 [v0.2.3 发布说明](docs/RELEASE_NOTES_v0.2.3.md)。
 
 当前功能包含：
 
@@ -16,6 +16,7 @@
 - 新建和编辑任务、创建/编辑项目、当前视图搜索、完成/重新打开、归档与安全删除
 - 项目删除可选择把全部活跃/归档任务转移到既有或新项目，或经再次确认后连同任务永久删除
 - 列表多选、当前过滤结果全选、普通列表批量归档和已归档列表批量永久删除
+- 列表把手拖动与键盘上下键排序；筛选视图只重排可见子集并保留隐藏任务位置
 - 任务详情附件与图片：托管副本、默认应用打开、紧凑叠图浏览和支持键盘/缩放的大图查看器
 - 子任务和验收标准独立确认；有未确认验收标准时不能完成任务
 - 看板拖放和状态选择器可直接更新任务状态
@@ -29,11 +30,11 @@
 - 带格式版本的 JSON 备份与恢复：系统文件选择、导入预览、托管文件内容、明确确认和双层数据校验
 - UI 与 MCP 并发写入时自动重读并重放用户操作；空闲时只轮询轻量版本号
 - 今日、明日和逾期状态使用本机日期动态计算
-- Rust STDIO MCP：读取项目/任务、创建任务和版本安全更新
+- Rust STDIO MCP：读取项目/任务、创建任务、版本安全更新和项目/归档范围内的原子排序
 - 项目内 Codex Skill：冲突时保留用户新修改，不默认重开已完成任务
 - 用户确认后的一键 Codex 集成：注册随应用打包的 MCP，并安装用户级 Skill
 - 侧边栏显示真实的 Codex 集成配置状态，不把“已配置”误写成实时连接
-- 设置页手动检查更新；只安装通过 Tauri 更新签名验证的新版本
+- 正式桌面后台节流检查更新，侧栏与设置页显示真实版本/可更新状态；下载和安装仍由用户明确触发且只接受通过 Tauri 签名验证的新版本
 
 Codex 不会自动打开便签，也不会从 Todo 反向启动会话。集成只写当前用户的 `~/.codex/config.toml` 与 `~/.agents/skills/todolist-mcp`，不会修改 Codex 安装目录；连接方式和安全边界见 [Codex integration](docs/CODEX_INTEGRATION.md)。备份格式和文件安全边界见 [Data backup](docs/DATA_BACKUP.md)。
 

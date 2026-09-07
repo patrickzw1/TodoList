@@ -7,7 +7,10 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use task_core::{AcceptanceCriterion, ActivityItem, Priority, Project, Subtask, Task, TaskStatus};
+use task_core::{
+    AcceptanceCriterion, ActivityItem, Priority, Project, Subtask, Task, TaskStatus,
+    MAX_SAFE_INTEGER,
+};
 use task_store_sqlite::{IdempotentMutationResult, SqliteTaskStore};
 use uuid::Uuid;
 
@@ -56,6 +59,28 @@ pub struct ListTasksInput {
 pub struct GetTaskInput {
     #[schemars(description = "Task id")]
     pub task_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReorderTasksInput {
+    #[schemars(description = "Project containing every supplied task")]
+    pub project_id: String,
+    #[schemars(description = "Whether the ordered group is archived")]
+    pub archived: bool,
+    #[schemars(description = "Latest workspaceVersion returned by list_projects or list_tasks")]
+    pub expected_workspace_version: u64,
+    #[schemars(
+        description = "Every task id in this project/archive group, exactly once, in the desired order"
+    )]
+    pub task_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListTasksCursor {
+    workspace_version: u64,
+    filter_fingerprint: String,
+    last_task_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -372,6 +397,12 @@ impl TodoMcpServer {
                 let requested_status = input.status.map(TaskStatus::from);
                 let include_done = input.include_done.unwrap_or(true);
                 let include_archived = input.include_archived.unwrap_or(false);
+                let filter_fingerprint = request_fingerprint(&json!({
+                    "projectId": &input.project_id,
+                    "status": &requested_status,
+                    "includeDone": include_done,
+                    "includeArchived": include_archived,
+                }));
                 let tasks: Vec<_> = workspace
                     .tasks
                     .into_iter()
@@ -393,19 +424,41 @@ impl TodoMcpServer {
                     .collect();
                 let total_count = tasks.len();
                 let start = match input.cursor.as_deref() {
-                    Some(cursor) => match tasks.iter().position(|task| task.id == cursor) {
+                    Some(cursor) => {
+                        let cursor: ListTasksCursor = match serde_json::from_str(cursor) {
+                            Ok(cursor) => cursor,
+                            Err(_) => {
+                                return Self::error(
+                                    "cursor is invalid; restart list_tasks without a cursor",
+                                )
+                            }
+                        };
+                        if cursor.workspace_version != workspace.version
+                            || cursor.filter_fingerprint != filter_fingerprint
+                        {
+                            return Self::error("cursor is stale or belongs to different list_tasks filters; restart without a cursor");
+                        }
+                        match tasks.iter().position(|task| task.id == cursor.last_task_id) {
                         Some(index) => index + 1,
                         None => {
                             return Self::error(
                                 "cursor is invalid for the current list_tasks filters; restart without a cursor",
                             )
                         }
-                    },
+                        }
+                    }
                     None => 0,
                 };
                 let end = (start + limit as usize).min(total_count);
                 let next_cursor = if end < total_count {
-                    Some(tasks[end - 1].id.clone())
+                    Some(
+                        serde_json::to_string(&ListTasksCursor {
+                            workspace_version: workspace.version,
+                            filter_fingerprint,
+                            last_task_id: tasks[end - 1].id.clone(),
+                        })
+                        .expect("serialize list cursor"),
+                    )
                 } else {
                     None
                 };
@@ -427,6 +480,51 @@ impl TodoMcpServer {
                 "TodoList workspace is not initialized; open the desktop app once before using MCP",
             ),
             Err(error) => Self::error(format!("Could not read TodoList tasks: {error}")),
+        }
+    }
+
+    #[tool(
+        description = "Reorder every task in one project and archived-state group. Read the full group first, follow all list_tasks pages, then pass every stable task id exactly once with the latest workspace version. This changes only shared task order; task fields, status, project, archive state, task versions, attachments, and images are preserved.",
+        annotations(
+            title = "Reorder TodoList tasks",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    fn reorder_tasks(&self, Parameters(input): Parameters<ReorderTasksInput>) -> CallToolResult {
+        if input.expected_workspace_version > MAX_SAFE_INTEGER {
+            return Self::error(
+                "expected_workspace_version exceeds the exact JavaScript integer range",
+            );
+        }
+        let project_id = input.project_id.clone();
+        let task_ids = input.task_ids.clone();
+        let expected_workspace_version = input.expected_workspace_version;
+        let archived = input.archived;
+        let mutation = self.store.mutate_workspace_if_changed(move |mut workspace| {
+            if workspace.version != expected_workspace_version {
+                return Err(serde_json::to_string(&json!({
+                    "code": "workspace_version_conflict",
+                    "message": "The workspace changed after the order was read. Read the complete group again before reordering.",
+                    "expectedWorkspaceVersion": expected_workspace_version,
+                    "currentWorkspaceVersion": workspace.version,
+                })).expect("serialize workspace version conflict"));
+            }
+            let changed = workspace.reorder_tasks(&project_id, archived, &task_ids)?;
+            Ok((workspace, changed))
+        });
+
+        match mutation {
+            Ok(result) => Self::success(json!({
+                "workspaceVersion": result.workspace.version,
+                "changed": result.changed,
+                "projectId": input.project_id,
+                "archived": input.archived,
+                "taskIds": input.task_ids,
+            })),
+            Err(error) => Self::error(format!("Could not reorder TodoList tasks: {error}")),
         }
     }
 
@@ -705,8 +803,8 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.2",
-    instructions = "TodoList is a local-first task app. Task details support separate attachments and images, added and managed through the desktop UI. get_task and list_tasks return file metadata, not file content; update_task preserves these fields. This MCP server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. If a version conflict occurs, read the task again: preserve newer user edits, merge only non-conflicting fields, and skip same-field conflicts unless the user explicitly asked to replace them. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
+    version = "0.2.3",
+    instructions = "TodoList is a local-first task app. Task details support separate attachments and images, added and managed through the desktop UI. get_task and list_tasks return file metadata, not file content; update_task and reorder_tasks preserve these fields. This MCP server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
 
@@ -1244,6 +1342,135 @@ mod tests {
             cursor: Some("not-a-returned-cursor".to_string()),
         }));
         assert_eq!(invalid_cursor.is_error, Some(true));
+
+        drop(server);
+        remove_database(&database_path);
+    }
+
+    #[test]
+    fn reorders_complete_groups_atomically_and_invalidates_old_cursors() {
+        let (server, database_path) = test_server();
+        for title in ["First", "Second", "Third"] {
+            assert_eq!(
+                server
+                    .create_task(Parameters(CreateTaskInput {
+                        request_id: None,
+                        project_id: "project-1".to_string(),
+                        title: title.to_string(),
+                        description: None,
+                        priority: None,
+                        due_date: None,
+                        tags: None,
+                        subtasks: None,
+                        acceptance_criteria: None,
+                        dependencies: None,
+                    }))
+                    .is_error,
+                Some(false)
+            );
+        }
+        let before = server.store.load_workspace().unwrap().unwrap();
+        let original_ids = before
+            .tasks
+            .iter()
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        let original_task_versions = before
+            .tasks
+            .iter()
+            .map(|task| (task.id.clone(), task.version))
+            .collect::<std::collections::HashMap<_, _>>();
+        let first_page = result_json(server.list_tasks(Parameters(ListTasksInput {
+            project_id: Some("project-1".into()),
+            status: None,
+            include_done: None,
+            include_archived: None,
+            limit: Some(1),
+            cursor: None,
+        })));
+        let stale_cursor = first_page["nextCursor"].as_str().unwrap().to_string();
+        let ordered_ids = original_ids.iter().rev().cloned().collect::<Vec<_>>();
+
+        let reordered = result_json(server.reorder_tasks(Parameters(ReorderTasksInput {
+            project_id: "project-1".into(),
+            archived: false,
+            expected_workspace_version: before.version,
+            task_ids: ordered_ids.clone(),
+        })));
+        assert_eq!(reordered["changed"], true);
+        assert_eq!(reordered["workspaceVersion"], before.version + 1);
+        let after = server.store.load_workspace().unwrap().unwrap();
+        assert_eq!(
+            after.tasks.iter().map(|task| &task.id).collect::<Vec<_>>(),
+            ordered_ids.iter().collect::<Vec<_>>()
+        );
+        assert!(after
+            .tasks
+            .iter()
+            .all(|task| original_task_versions[&task.id] == task.version));
+
+        let old_page = server.list_tasks(Parameters(ListTasksInput {
+            project_id: Some("project-1".into()),
+            status: None,
+            include_done: None,
+            include_archived: None,
+            limit: Some(1),
+            cursor: Some(stale_cursor),
+        }));
+        assert_eq!(old_page.is_error, Some(true));
+        assert!(old_page.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("stale"));
+
+        let no_op = result_json(server.reorder_tasks(Parameters(ReorderTasksInput {
+            project_id: "project-1".into(),
+            archived: false,
+            expected_workspace_version: after.version,
+            task_ids: ordered_ids.clone(),
+        })));
+        assert_eq!(no_op["changed"], false);
+        assert_eq!(no_op["workspaceVersion"], after.version);
+
+        let stale = server.reorder_tasks(Parameters(ReorderTasksInput {
+            project_id: "project-1".into(),
+            archived: false,
+            expected_workspace_version: before.version,
+            task_ids: original_ids.clone(),
+        }));
+        assert_eq!(stale.is_error, Some(true));
+        assert!(stale.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("workspace_version_conflict"));
+
+        for invalid_ids in [
+            vec![
+                ordered_ids[0].clone(),
+                ordered_ids[0].clone(),
+                ordered_ids[2].clone(),
+            ],
+            vec![ordered_ids[0].clone(), ordered_ids[1].clone()],
+            vec![
+                ordered_ids[0].clone(),
+                ordered_ids[1].clone(),
+                "missing".into(),
+            ],
+        ] {
+            let failed = server.reorder_tasks(Parameters(ReorderTasksInput {
+                project_id: "project-1".into(),
+                archived: false,
+                expected_workspace_version: after.version,
+                task_ids: invalid_ids,
+            }));
+            assert_eq!(failed.is_error, Some(true));
+            assert_eq!(
+                server.store.load_workspace().unwrap().unwrap().version,
+                after.version
+            );
+        }
 
         drop(server);
         remove_database(&database_path);

@@ -1,154 +1,149 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { ArrowClockwise, DownloadSimple, FolderOpen, Trash } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
-import { friendlyUpdateError, type UpdateFailureStage } from "./update-status";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createSoftwareUpdateManager, UPDATE_CHECK_INTERVAL_MS, type ManagedSoftwareUpdate,
+  type SoftwareUpdateManager, type SoftwareUpdateRuntime, type SoftwareUpdateSnapshot,
+  type UpdateDownloadEvent,
+} from "./software-update-manager";
 
-type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "latest" | "error";
-type ComponentBuildStatus = { desktopBuild: string; mcpBuild?: string; matches: boolean; message: string };
-type UpdateRecovery = { attemptId: string; version: string; state: "failed" | "cancelled"; reason: string; installerDirectory: string; explorerOpened: boolean };
+function managedUpdate(update: Update): ManagedSoftwareUpdate {
+  return {
+    version: update.version,
+    download: (onEvent, options) => update.download((event) => onEvent(event as UpdateDownloadEvent), options),
+    install: (options) => update.install(options),
+    close: () => update.close(),
+  };
+}
 
-export function SoftwareUpdateCard() {
+function createRuntime(): SoftwareUpdateRuntime {
   const desktop = isTauri();
-  const [currentVersion, setCurrentVersion] = useState("0.1.0");
-  const [phase, setPhase] = useState<UpdatePhase>("idle");
-  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
-  const [message, setMessage] = useState(desktop ? "仅在你点击检查时访问更新源" : "网页预览不执行桌面更新");
-  const [progress, setProgress] = useState<number | null>(null);
-  const [componentStatus, setComponentStatus] = useState<ComponentBuildStatus | null>(null);
-  const [recovery, setRecovery] = useState<UpdateRecovery | null>(null);
+  return {
+    desktop,
+    buildVersion: __APP_VERSION__,
+    ...(desktop ? {
+      getCurrentVersion: getVersion,
+      check: async () => {
+        const update = await check({ timeout: 30_000, allowDowngrades: false });
+        return update ? managedUpdate(update) : null;
+      },
+      getComponentStatus: () => invoke("component_build_status"),
+      getRecovery: () => invoke("update_recovery_status"),
+      retryRecovery: (attemptId) => invoke("retry_update_installer", { attemptId }),
+      discardRecovery: (attemptId) => invoke("discard_update_installer", { attemptId }),
+      openRecoveryLocation: (attemptId) => invoke("open_update_installer_location", { attemptId }),
+      relaunch,
+    } : {}),
+  };
+}
+
+type SoftwareUpdateContextValue = SoftwareUpdateSnapshot & {
+  checkForUpdate: SoftwareUpdateManager["checkForUpdate"];
+  checkIfStale: SoftwareUpdateManager["checkIfStale"];
+  downloadAndInstall: SoftwareUpdateManager["downloadAndInstall"];
+  retryRetainedUpdate: SoftwareUpdateManager["retryRetainedUpdate"];
+  discardRetainedUpdate: SoftwareUpdateManager["discardRetainedUpdate"];
+  openRetainedUpdateLocation: SoftwareUpdateManager["openRetainedUpdateLocation"];
+};
+
+const SoftwareUpdateContext = createContext<SoftwareUpdateContextValue | null>(null);
+
+export function SoftwareUpdateProvider({ children }: { children: ReactNode }) {
+  const manager = useMemo(() => createSoftwareUpdateManager(createRuntime()), []);
+  const [snapshot, setSnapshot] = useState(manager.getSnapshot);
+  const disposeTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!desktop) return;
-    void getVersion().then(setCurrentVersion);
-    void invoke<ComponentBuildStatus>("component_build_status").then(setComponentStatus).catch(() => setComponentStatus(null));
-    void invoke<UpdateRecovery | null>("update_recovery_status").then(setRecovery).catch(() => setRecovery(null));
-  }, [desktop]);
+    if (disposeTimer.current !== null) window.clearTimeout(disposeTimer.current);
+    disposeTimer.current = null;
+    const unsubscribe = manager.subscribe(setSnapshot);
+    void manager.initialize();
+    if (!manager.getSnapshot().desktop) return unsubscribe;
 
-  useEffect(() => () => { if (availableUpdate) void availableUpdate.close(); }, [availableUpdate]);
-
-  const showFailure = (error: unknown, stage: UpdateFailureStage) => {
-    setPhase("error");
-    setMessage(friendlyUpdateError(error, stage));
-    setProgress(null);
-  };
-
-  const checkForUpdate = async () => {
-    setPhase("checking");
-    setMessage("正在安全检查更新……");
-    setProgress(null);
-    try {
-      if (availableUpdate) await availableUpdate.close();
-      const update = await check({ timeout: 30_000, allowDowngrades: false });
-      setAvailableUpdate(update);
-      if (update) {
-        setPhase("available");
-        setMessage(`发现新版本 ${update.version}，安装前会验证更新签名。`);
-      } else {
-        setPhase("latest");
-        setMessage("当前已经是最新版本。");
-      }
-    } catch (error) {
-      showFailure(error, "check");
-    }
-  };
-
-  const installUpdate = async () => {
-    if (!availableUpdate) return;
-    let failureStage: UpdateFailureStage = "download";
-    setPhase("downloading");
-    setMessage("正在下载更新并验证签名；此时尚未开始安装……");
-    let downloaded = 0;
-    let contentLength: number | undefined;
-    const onDownload = (event: DownloadEvent) => {
-      if (event.event === "Started") contentLength = event.data.contentLength;
-      if (event.event === "Progress") downloaded += event.data.chunkLength;
-      if (event.event === "Finished") setProgress(100);
-      else if (contentLength) setProgress(Math.min(99, Math.round((downloaded / contentLength) * 100)));
+    const checkWhenVisible = () => {
+      if (document.visibilityState === "visible") void manager.checkIfStale();
     };
-    try {
-      await availableUpdate.download(onDownload, { timeout: 10 * 60_000 });
-      setPhase("downloaded");
-      setProgress(100);
-      setMessage("下载完成且签名有效，正在启动安装程序……");
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      failureStage = "install";
-      setPhase("installing");
-      setMessage("安装程序正在更新主程序与 MCP；只有完整成功后才会重新打开 TodoList。暂时不要再次启动 TodoList。" );
-      await availableUpdate.install({ restartAfterInstall: true });
-      await relaunch();
-    } catch (error) {
-      showFailure(error, failureStage);
-    }
-  };
+    const timer = window.setInterval(() => void manager.checkIfStale(), UPDATE_CHECK_INTERVAL_MS);
+    window.addEventListener("focus", checkWhenVisible);
+    document.addEventListener("visibilitychange", checkWhenVisible);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", checkWhenVisible);
+      document.removeEventListener("visibilitychange", checkWhenVisible);
+      // React StrictMode immediately mounts the same provider again in development.
+      // Delay disposal by one task so that cycle can retain the single manager.
+      disposeTimer.current = window.setTimeout(() => void manager.dispose(), 0);
+    };
+  }, [manager]);
 
-  const retryRetainedUpdate = async () => {
-    if (!recovery) return;
-    setPhase("installing");
-    setMessage("正在重新启动保留的安装程序；成功前不会宣称更新完成。" );
-    try {
-      await invoke("retry_update_installer", { attemptId: recovery.attemptId });
-    } catch (error) {
-      showFailure(error, "install");
-    }
-  };
+  const value = useMemo<SoftwareUpdateContextValue>(() => ({
+    ...snapshot,
+    checkForUpdate: manager.checkForUpdate,
+    checkIfStale: manager.checkIfStale,
+    downloadAndInstall: manager.downloadAndInstall,
+    retryRetainedUpdate: manager.retryRetainedUpdate,
+    discardRetainedUpdate: manager.discardRetainedUpdate,
+    openRetainedUpdateLocation: manager.openRetainedUpdateLocation,
+  }), [manager, snapshot]);
 
-  const discardRetainedUpdate = async () => {
-    if (!recovery) return;
-    try {
-      await invoke("discard_update_installer", { attemptId: recovery.attemptId });
-      setRecovery(null);
-      setMessage("已清理这次未完成更新的专属缓存。" );
-    } catch (error) {
-      showFailure(error, "install");
-    }
-  };
+  return <SoftwareUpdateContext.Provider value={value}>{children}</SoftwareUpdateContext.Provider>;
+}
 
-  const busy = phase === "checking" || phase === "downloading" || phase === "downloaded" || phase === "installing";
-  const actionLabel = phase === "available"
+export function useSoftwareUpdate() {
+  const context = useContext(SoftwareUpdateContext);
+  if (!context) throw new Error("useSoftwareUpdate must be used inside SoftwareUpdateProvider");
+  return context;
+}
+
+export function SoftwareUpdateCard() {
+  const update = useSoftwareUpdate();
+  const busy = ["checking", "downloading", "downloaded", "installing"].includes(update.phase);
+  const actionLabel = update.phase === "available"
     ? "下载并重启"
-    : phase === "checking"
+    : update.phase === "checking"
       ? "检查中……"
-      : phase === "downloading"
-        ? progress === null ? "下载中……" : `下载 ${progress}%`
-        : phase === "downloaded" ? "准备安装……"
-        : phase === "installing" ? "安装中……"
-        : phase === "latest" ? "再次检查" : "检查更新";
+      : update.phase === "downloading"
+        ? update.progress === null ? "下载中……" : `下载 ${update.progress}%`
+        : update.phase === "downloaded" ? "准备安装……"
+        : update.phase === "installing" ? "安装中……"
+        : update.phase === "latest" ? "再次检查" : "检查更新";
 
   return (
     <>
       <div className="settings-card update-card">
         <div>
           <strong>软件更新</strong>
-          <span>当前版本 {currentVersion} · 不允许降级安装</span>
+          <span>当前版本 {update.currentVersion}{update.availableVersion ? ` · 可用版本 ${update.availableVersion}` : ""} · 不允许降级安装</span>
         </div>
         <button
-          disabled={!desktop || busy}
-          onClick={() => void (phase === "available" ? installUpdate() : checkForUpdate())}
+          disabled={!update.desktop || busy}
+          onClick={() => void (update.phase === "available" ? update.downloadAndInstall() : update.checkForUpdate())}
         >
-          {phase === "available" ? <DownloadSimple /> : <ArrowClockwise />}
+          {update.phase === "available" ? <DownloadSimple /> : <ArrowClockwise />}
           {actionLabel}
         </button>
       </div>
-      <div className={`update-message ${phase === "error" ? "is-error" : ""}`}>
-        {message}
-        {progress !== null && phase === "downloading" && <progress max="100" value={progress} />}
+      <div className={`update-message ${update.phase === "error" ? "is-error" : ""}`}>
+        {update.message}
+        {update.progress !== null && update.phase === "downloading" && <progress max="100" value={update.progress} />}
       </div>
-      {componentStatus && <div className={`update-component-state ${componentStatus.matches ? "is-matched" : "is-error"}`}>
-        {componentStatus.message}
+      {update.componentStatus && <div className={`update-component-state ${update.componentStatus.matches ? "is-matched" : "is-error"}`}>
+        {update.componentStatus.message}
       </div>}
-      {recovery && <div className={`update-recovery ${recovery.state === "failed" ? "is-error" : ""}`}>
+      {update.recovery && <div className={`update-recovery ${update.recovery.state === "failed" ? "is-error" : ""}`}>
         <div>
-          <strong>{recovery.state === "failed" ? `版本 ${recovery.version} 安装失败` : `版本 ${recovery.version} 安装已取消`}</strong>
-          <span>{recovery.reason}</span>
-          <small title={recovery.installerDirectory}>安装包保留在 TodoList 专属临时目录，可重试或手动清理。</small>
+          <strong>{update.recovery.state === "failed" ? `版本 ${update.recovery.version} 安装失败` : `版本 ${update.recovery.version} 安装已取消`}</strong>
+          <span>{update.recovery.reason}</span>
+          <small title={update.recovery.installerDirectory}>安装包保留在 TodoList 专属临时目录，可重试或手动清理。</small>
         </div>
         <div className="update-recovery-actions">
-          <button onClick={() => void retryRetainedUpdate()} disabled={busy}><ArrowClockwise />重试</button>
-          <button onClick={() => void invoke("open_update_installer_location", { attemptId: recovery.attemptId })}><FolderOpen />打开位置</button>
-          <button className="danger-text" onClick={() => void discardRetainedUpdate()} disabled={busy}><Trash />清理</button>
+          <button onClick={() => void update.retryRetainedUpdate()} disabled={busy}><ArrowClockwise />重试</button>
+          <button onClick={() => void update.openRetainedUpdateLocation()}><FolderOpen />打开位置</button>
+          <button className="danger-text" onClick={() => void update.discardRetainedUpdate()} disabled={busy}><Trash />清理</button>
         </div>
       </div>}
     </>

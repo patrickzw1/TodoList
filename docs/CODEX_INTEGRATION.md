@@ -1,6 +1,6 @@
 # Codex integration
 
-TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex six tools:
+TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex seven tools:
 
 - `list_projects`
 - `create_project`
@@ -8,6 +8,7 @@ TodoList remains a standalone local app. The optional `todolist-mcp` STDIO serve
 - `get_task`
 - `create_task`
 - `update_task`
+- `reorder_tasks`
 
 The installed app registers `todolist` globally for daily tasks. The repository's `.codex/config.toml` registers a separate `todolist_dev` server only for development tests in this project. It does not override `todolist`. Never silently substitute one server for the other. The packaged production app bundles a native MCP sidecar, so end users do not need Node.js or Rust. Restart Codex after changing MCP configuration. Write tools use Codex's `writes` approval mode.
 
@@ -33,7 +34,7 @@ command = "/absolute/path/to/todo/target/development/release/todolist-mcp"
 startup_timeout_sec = 10
 tool_timeout_sec = 15
 required = false
-enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "create_task", "update_task"]
+enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "create_task", "update_task", "reorder_tasks"]
 default_tools_approval_mode = "writes"
 ```
 
@@ -47,14 +48,15 @@ For an older developer machine whose global `todolist` still points into this re
 
 ## Attachments and images
 
-Task details support separate attachments and image collections. `get_task` and `list_tasks` include their metadata (`id`, `originalName`, `mediaType`, `size`, `storageKey`, `addedAt`); they do not return file content. `update_task` preserves both collections automatically. Files are added, removed, opened, and previewed in the desktop task-detail panel. The six MCP tools do not upload, import, remove, or preview files, and putting a path in a description does not attach it.
+Task details support separate attachments and image collections. `get_task` and `list_tasks` include their metadata (`id`, `originalName`, `mediaType`, `size`, `storageKey`, `addedAt`); they do not return file content. `update_task` and `reorder_tasks` preserve both collections automatically. Files are added, removed, opened, and previewed in the desktop task-detail panel. The seven MCP tools do not upload, import, remove, or preview files, and putting a path in a description does not attach it.
 
-After upgrading, use the installed app's Codex integration page to update the TodoList-managed Skill if it shows an update is needed, then restart Codex to reload the bundled MCP server and its capability descriptions. The app does not silently rewrite the user's Codex configuration during an upgrade.
+After upgrading, use the installed app's Codex integration page to confirm and refresh the TodoList-managed integration if it shows an update is needed, then reconnect or restart Codex to reload the bundled MCP server and its capability descriptions. This explicit refresh updates the managed Skill and adds newly managed tools such as `reorder_tasks` to the existing `todolist` entry while preserving unrelated settings and MCP servers. The app does not silently rewrite the user's Codex configuration during an upgrade.
 
 ## Task safety
 
 - Every task carries a version. `update_task` rejects stale versions instead of silently overwriting user changes.
-- `list_tasks` uses cursor pagination with a default page size of 50 and a maximum of 100.
+- `list_tasks` uses versioned opaque cursor pagination with a default page size of 50 and a maximum of 100. Any intervening workspace change makes an old cursor stale, so restart the filtered listing without that cursor.
+- `reorder_tasks` requires every stable task id in one project and archived-state group exactly once plus the latest workspace version. To order archived tasks, call `list_tasks` with `include_archived=true`, read every page, and filter the returned items to `archived=true` on the client because `list_tasks` has no archived-only filter. It changes only shared order and never changes task fields or task versions.
 - `create_project` and `create_task` accept a stable `request_id`. Retrying the same input returns the original item; reusing that key for different input is rejected. The small retry ledger is capped at 1,000 records.
 - After a conflict, Codex must re-read and preserve newer user edits.
 - Completed tasks are not reopened unless the user explicitly requests it.

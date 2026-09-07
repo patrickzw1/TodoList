@@ -20,6 +20,12 @@ pub struct IdempotentMutationResult {
     pub replayed: bool,
 }
 
+#[derive(Debug)]
+pub struct OptionalMutationResult {
+    pub workspace: Workspace,
+    pub changed: bool,
+}
+
 impl SqliteTaskStore {
     pub fn open(database_path: impl AsRef<Path>) -> Result<Self, String> {
         let store = Self {
@@ -344,6 +350,42 @@ impl SqliteTaskStore {
         Ok(updated)
     }
 
+    /// Apply a mutation atomically while allowing a validated no-op to return
+    /// without rewriting the SQLite snapshot or advancing its version.
+    pub fn mutate_workspace_if_changed<F>(
+        &self,
+        mutate: F,
+    ) -> Result<OptionalMutationResult, String>
+    where
+        F: FnOnce(Workspace) -> Result<(Workspace, bool), String>,
+    {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        let current = Self::load_from_connection(&transaction)?.ok_or_else(|| {
+            "TodoList workspace is not initialized; open the desktop app once before using MCP"
+                .to_string()
+        })?;
+        let (mut updated, changed) = mutate(current.clone())?;
+        if !changed {
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(OptionalMutationResult {
+                workspace: current,
+                changed: false,
+            });
+        }
+        updated.trim_activity();
+        updated.validate()?;
+        updated.validate_completion_changes(&current)?;
+        Self::persist_transaction(&transaction, &updated, Some(&current))?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(OptionalMutationResult {
+            workspace: updated,
+            changed: true,
+        })
+    }
+
     pub fn mutate_workspace_idempotent<F>(
         &self,
         operation: &str,
@@ -636,6 +678,60 @@ mod tests {
 
         assert_eq!(updated.version, 2);
         assert_eq!(store.load_workspace().unwrap().unwrap().version, 2);
+
+        drop(store);
+        let _ = std::fs::remove_file(database_path.with_extension("sqlite-shm"));
+        let _ = std::fs::remove_file(database_path.with_extension("sqlite-wal"));
+        let _ = std::fs::remove_file(database_path);
+    }
+
+    #[test]
+    fn optional_no_op_mutation_does_not_rewrite_or_advance_the_snapshot() {
+        let database_path = std::env::temp_dir().join(format!(
+            "todolist-no-op-{}-{}.sqlite",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = SqliteTaskStore::open(&database_path).expect("open store");
+        store
+            .save_workspace(&Workspace {
+                version: 1,
+                projects: vec![Project {
+                    id: "project-1".into(),
+                    name: "TodoList".into(),
+                    color: "#1264f4".into(),
+                }],
+                tasks: vec![],
+            })
+            .expect("seed workspace");
+        let before: (i64, String, i64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT version, payload_json, updated_at FROM workspace_snapshot WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        let result = store
+            .mutate_workspace_if_changed(|workspace| Ok((workspace, false)))
+            .unwrap();
+        let after: (i64, String, i64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT version, payload_json, updated_at FROM workspace_snapshot WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!(!result.changed);
+        assert_eq!(result.workspace.version, 1);
+        assert_eq!(after, before);
 
         drop(store);
         let _ = std::fs::remove_file(database_path.with_extension("sqlite-shm"));

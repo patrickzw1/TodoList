@@ -121,6 +121,18 @@ test("desktop still loads SQLite when reading localStorage is prohibited", async
   assert.equal((await run.mount()).workspace.version, 11);
 });
 
+test("a no-op workspace action does not save or increment the revision", async () => {
+  const run = driver();
+  const hook = await run.mount();
+  const beforeVersion = hook.workspace.version;
+  const beforeSaves = run.calls.filter((command) => command === "save_workspace").length;
+  hook.commit((current) => current);
+  const after = await run.flush();
+  assert.equal(after.workspace.version, beforeVersion);
+  assert.equal(run.database.version, beforeVersion);
+  assert.equal(run.calls.filter((command) => command === "save_workspace").length, beforeSaves);
+});
+
 test("browser persistence failure is visible, rolls back and permits the next save", async () => {
   const run = driver({ desktop: false });
   let hook = await run.mount();

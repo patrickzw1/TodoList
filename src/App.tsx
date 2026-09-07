@@ -1,5 +1,5 @@
 import {
-  Archive, ArrowCounterClockwise, ArrowsInSimple, ArrowsOutSimple, ArrowUp, CaretDown, CheckCircle, Circle, Columns, Folder, Gear, LinkSimple,
+  Archive, ArrowCounterClockwise, ArrowsInSimple, ArrowsOutSimple, ArrowUp, CaretDown, CheckCircle, Circle, Columns, DotsSixVertical, Folder, Gear, LinkSimple,
   List, LockKey, MagnifyingGlass, PencilSimple, Play, Plus, PushPin, PushPinSlash, Sun, Trash, X,
 } from "@phosphor-icons/react";
 import { isTauri, invoke } from "@tauri-apps/api/core";
@@ -8,7 +8,7 @@ import type { Project, Task, TaskStatus, Workspace } from "./types";
 import { CodexIntegrationCard, readCodexIntegrationStatus, type CodexIntegrationStatus } from "./CodexIntegrationCard";
 import { DataBackupCard } from "./DataBackupCard";
 import { TaskFileSections } from "./TaskFiles";
-import { SoftwareUpdateCard } from "./SoftwareUpdateCard";
+import { SoftwareUpdateCard, SoftwareUpdateProvider, useSoftwareUpdate } from "./SoftwareUpdateCard";
 import { isOverdue, localIsoDate, taskDueLabel, todayHeading } from "./date-utils";
 import { activityItemsForDetail, formatActivityTime, taskWithUserActivity } from "./task-activity";
 import { resolveDefaultProjectId } from "./task-creation";
@@ -22,7 +22,7 @@ import { validateTaskCompletion } from "./task-validation";
 import { checklistEditsOnLatest } from "./task-checklists";
 import {
   addManagedFile, archiveTasksById, deleteArchivedTasksById, deleteProjectWithTasks, moveProjectTasks,
-  moveProjectTasksToNewProject, reconcileSelectedTaskIds, removeManagedFile,
+  moveProjectTasksToNewProject, reconcileSelectedTaskIds, removeManagedFile, reorderTaskSubset,
 } from "./workspace-actions";
 
 type View =
@@ -45,6 +45,9 @@ const statusLabel: Record<TaskStatus, string> = {
 const statusOrder: TaskStatus[] = ["todo", "in_progress", "blocked", "done"];
 const DETAIL_TRANSITION_MS = 220;
 const BOARD_DRAG_THRESHOLD = 6;
+const LIST_DRAG_THRESHOLD = 5;
+const LIST_EDGE_ZONE = 52;
+const LIST_MAX_SCROLL = 15;
 
 function nextWorkspace(workspace: Workspace, tasks: Task[]): Workspace {
   return { ...workspace, version: workspace.version + 1, tasks };
@@ -76,8 +79,8 @@ function StatusButton({ task, onToggle }: { task: Task; onToggle: () => void }) 
   );
 }
 
-function Sidebar({ projects, view, version, storageState, storageMessage, integrationStatus, integrationError, openingSticky, onOpenSticky, onView, onCreate, onCreateProject, onEditProject }: {
-  projects: Project[]; view: View; version: number; storageState: StorageState; storageMessage: string; integrationStatus: CodexIntegrationStatus | null; integrationError: string; openingSticky: boolean; onOpenSticky: () => void; onView: (view: View) => void; onCreate: () => void; onCreateProject: () => void; onEditProject: (projectId: string) => void;
+function Sidebar({ projects, view, currentVersion, updateAvailable, storageState, storageMessage, integrationStatus, integrationError, openingSticky, onOpenSticky, onView, onCreate, onCreateProject, onEditProject }: {
+  projects: Project[]; view: View; currentVersion: string; updateAvailable: boolean; storageState: StorageState; storageMessage: string; integrationStatus: CodexIntegrationStatus | null; integrationError: string; openingSticky: boolean; onOpenSticky: () => void; onView: (view: View) => void; onCreate: () => void; onCreateProject: () => void; onEditProject: (projectId: string) => void;
 }) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const integrationCopy = integrationError
@@ -104,32 +107,52 @@ function Sidebar({ projects, view, version, storageState, storageMessage, integr
         <button className={view.kind === "archived" ? "active" : ""} onClick={() => onView({ kind: "archived" })}><Archive />已归档</button>
       </nav>
       <div className="sidebar-rule" />
-      <div className="projects-heading"><button className="projects-toggle" onClick={() => setProjectsExpanded((expanded) => !expanded)} aria-expanded={projectsExpanded}><CaretDown weight="fill" />项目</button><button onClick={onCreateProject} aria-label="新建项目"><Plus /></button></div>
-      <nav className={`project-nav ${projectsExpanded ? "" : "collapsed"}`} aria-label="项目">
-        {projects.map((project) => (
-          <div className={`project-nav-row ${view.kind === "project" && view.projectId === project.id ? "active" : ""}`} key={project.id}>
-            <button className="project-open" onClick={() => onView({ kind: "project", projectId: project.id })}><Folder style={{ color: project.color }} /><span>{project.name}</span></button>
-            <button className="project-edit" onClick={() => onEditProject(project.id)} aria-label={`编辑项目 ${project.name}`} title="编辑项目"><PencilSimple /></button>
-          </div>
-        ))}
-      </nav>
+      <div className="projects-region">
+        <div className="projects-heading"><button className="projects-toggle" onClick={() => setProjectsExpanded((expanded) => !expanded)} aria-expanded={projectsExpanded}><CaretDown weight="fill" />项目</button><button onClick={onCreateProject} aria-label="新建项目"><Plus /></button></div>
+        <nav className={`project-nav ${projectsExpanded ? "" : "collapsed"}`} aria-label="项目">
+          {projects.map((project) => (
+            <div className={`project-nav-row ${view.kind === "project" && view.projectId === project.id ? "active" : ""}`} key={project.id}>
+              <button className="project-open" onClick={() => onView({ kind: "project", projectId: project.id })}><Folder style={{ color: project.color }} /><span>{project.name}</span></button>
+              <button className="project-edit" onClick={() => onEditProject(project.id)} aria-label={`编辑项目 ${project.name}`} title="编辑项目"><PencilSimple /></button>
+            </div>
+          ))}
+        </nav>
+      </div>
       <div className="sidebar-bottom">
         <button disabled={openingSticky} onClick={onOpenSticky} title="打开桌面便签并最小化任务台"><PushPin />{openingSticky ? "正在打开便签……" : "桌面便签"}</button>
         <button className={view.kind === "integration" ? "active" : ""} onClick={() => onView({ kind: "integration" })}><LinkSimple />连接与权限</button>
-        <button className={view.kind === "settings" ? "active" : ""} onClick={() => onView({ kind: "settings" })}><Gear />设置</button>
-        <div className={`local-state ${storageState}`} title={storageMessage}><span className="saved-dot" />{storageMessage} · v{version}</div>
+        <button className={`settings-nav ${view.kind === "settings" ? "active" : ""}`} onClick={() => onView({ kind: "settings" })}><Gear /><span>设置</span><small>v{currentVersion}</small>{updateAvailable && <i>可更新</i>}</button>
+        <div className={`local-state ${storageState}`} title={storageMessage}><span className="saved-dot" />{storageMessage}</div>
         <div className={`mcp-state ${integrationCopy.state}`} title={integrationError || integrationStatus?.message}><LinkSimple />{integrationCopy.label}</div>
       </div>
     </aside>
   );
 }
 
-function TaskRow({ task, project, selected, multiSelected, onSelect, onToggle, onTogglePin, onMultiSelect }: {
-  task: Task; project: Project; selected: boolean; multiSelected: boolean; onSelect: () => void; onToggle: () => void; onTogglePin: () => void; onMultiSelect: () => void;
+function TaskRow({ task, project, selected, multiSelected, dragging, dropPosition, onSelect, onToggle, onTogglePin, onMultiSelect, onReorderPointerDown, onReorderPointerMove, onReorderPointerEnd, onReorderPointerLost, onReorderKeyDown }: {
+  task: Task; project: Project; selected: boolean; multiSelected: boolean; dragging: boolean; dropPosition: "before" | "after" | null; onSelect: () => void; onToggle: () => void; onTogglePin: () => void; onMultiSelect: () => void;
+  onReorderPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onReorderPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onReorderPointerEnd: (event: ReactPointerEvent<HTMLButtonElement>, cancelled?: boolean) => void;
+  onReorderPointerLost: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onReorderKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const dueLabel = taskDueLabel(task.dueDate, task.dueLabel);
   return (
-    <div className={`task-row ${selected ? "selected" : ""} ${multiSelected ? "multi-selected" : ""}`} role="button" tabIndex={0} onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(); }}>
+    <div className={`task-row ${selected ? "selected" : ""} ${multiSelected ? "multi-selected" : ""} ${dragging ? "is-reordering" : ""} ${dropPosition ? `drop-${dropPosition}` : ""}`} data-task-id={task.id} data-project-id={task.projectId} data-archived={String(task.archived)} role="button" tabIndex={0} onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(); }}>
+      <button
+        type="button"
+        className="task-reorder-handle"
+        aria-label={`移动任务 ${task.title}`}
+        title="拖动排序；也可用上下方向键"
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={onReorderPointerDown}
+        onPointerMove={onReorderPointerMove}
+        onPointerUp={(event) => onReorderPointerEnd(event)}
+        onPointerCancel={(event) => onReorderPointerEnd(event, true)}
+        onLostPointerCapture={onReorderPointerLost}
+        onKeyDown={onReorderKeyDown}
+      ><DotsSixVertical weight="bold" /></button>
       <input className="task-multi-checkbox" type="checkbox" checked={multiSelected} onClick={(event) => event.stopPropagation()} onChange={onMultiSelect} aria-label={`选择任务 ${task.title}`} />
       <StatusButton task={task} onToggle={onToggle} />
       <span className="task-title">{task.title}</span>
@@ -148,15 +171,135 @@ function TaskRow({ task, project, selected, multiSelected, onSelect, onToggle, o
   );
 }
 
-function ListView({ projects, tasks, selectedTaskId, selectedTaskIds, onSelect, onToggle, onTogglePin, onMultiSelect, onSelectAll }: {
+function ListView({ projects, tasks, selectedTaskId, selectedTaskIds, onSelect, onToggle, onTogglePin, onMultiSelect, onSelectAll, onReorder }: {
   projects: Project[]; tasks: Task[]; selectedTaskId: string | null; selectedTaskIds: Set<string>; onSelect: (id: string) => void; onToggle: (id: string) => void; onTogglePin: (id: string) => void; onMultiSelect: (id: string) => void; onSelectAll: (selected: boolean) => void;
+  onReorder: (projectId: string, archived: boolean, visibleTaskIds: string[], orderedTaskIds: string[]) => void;
 }) {
   const selectAll = useRef<HTMLInputElement>(null);
+  const [dragPreview, setDragPreview] = useState<{ taskId: string; title: string; x: number; y: number; width: number } | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{ taskId: string; position: "before" | "after" } | null>(null);
+  const dragSession = useRef<{
+    taskId: string; projectId: string; archived: boolean; pointerId: number; handle: HTMLButtonElement;
+    startX: number; startY: number; lastX: number; lastY: number; width: number; title: string;
+    visibleTaskIds: string[]; orderedTaskIds: string[]; scrollContainer: HTMLElement | null; active: boolean; raf: number | null;
+  } | null>(null);
   const selectedVisible = tasks.filter((task) => selectedTaskIds.has(task.id)).length;
   const allSelected = tasks.length > 0 && selectedVisible === tasks.length;
   useEffect(() => { if (selectAll.current) selectAll.current.indeterminate = selectedVisible > 0 && !allSelected; }, [allSelected, selectedVisible]);
+
+  const updateDropAtPoint = (x: number, y: number) => {
+    const session = dragSession.current;
+    if (!session?.active) return;
+    const row = document.elementFromPoint(x, y)?.closest<HTMLElement>(".task-row");
+    if (!row || row.dataset.projectId !== session.projectId || row.dataset.archived !== String(session.archived)) {
+      setDropIndicator(null);
+      session.orderedTaskIds = session.visibleTaskIds;
+      return;
+    }
+    const targetId = row.dataset.taskId;
+    if (!targetId || !session.visibleTaskIds.includes(targetId)) return;
+    const position = y < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2 ? "before" : "after";
+    const ordered = session.visibleTaskIds.filter((id) => id !== session.taskId);
+    let insertion = ordered.indexOf(targetId);
+    if (targetId === session.taskId) insertion = session.visibleTaskIds.indexOf(session.taskId);
+    else if (position === "after") insertion += 1;
+    ordered.splice(Math.max(0, Math.min(insertion, ordered.length)), 0, session.taskId);
+    session.orderedTaskIds = ordered;
+    setDropIndicator({ taskId: targetId, position });
+  };
+
+  const autoScrollFrame = () => {
+    const session = dragSession.current;
+    if (!session?.active) return;
+    const container = session.scrollContainer;
+    if (container) {
+      const bounds = container.getBoundingClientRect();
+      let delta = 0;
+      if (session.lastY < bounds.top + LIST_EDGE_ZONE) delta = -LIST_MAX_SCROLL * (1 - Math.max(0, session.lastY - bounds.top) / LIST_EDGE_ZONE);
+      else if (session.lastY > bounds.bottom - LIST_EDGE_ZONE) delta = LIST_MAX_SCROLL * (1 - Math.max(0, bounds.bottom - session.lastY) / LIST_EDGE_ZONE);
+      if (delta) {
+        container.scrollTop += delta;
+        updateDropAtPoint(session.lastX, session.lastY);
+      }
+    }
+    session.raf = window.requestAnimationFrame(autoScrollFrame);
+  };
+
+  const clearDrag = (cancelled: boolean) => {
+    const session = dragSession.current;
+    if (!session) return;
+    dragSession.current = null;
+    if (session.raf !== null) window.cancelAnimationFrame(session.raf);
+    if (session.handle.hasPointerCapture(session.pointerId)) session.handle.releasePointerCapture(session.pointerId);
+    setDragPreview(null);
+    setDropIndicator(null);
+    if (!cancelled && session.active && session.orderedTaskIds.some((id, index) => id !== session.visibleTaskIds[index])) {
+      onReorder(session.projectId, session.archived, session.visibleTaskIds, session.orderedTaskIds);
+    }
+  };
+
+  useEffect(() => {
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && dragSession.current) {
+        event.preventDefault();
+        clearDrag(true);
+      }
+    };
+    window.addEventListener("keydown", cancelOnEscape);
+    return () => {
+      window.removeEventListener("keydown", cancelOnEscape);
+      clearDrag(true);
+    };
+  }, []);
+
+  const beginReorder = (event: ReactPointerEvent<HTMLButtonElement>, task: Task, projectTasks: Task[]) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const row = event.currentTarget.closest<HTMLElement>(".task-row")!;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragSession.current = {
+      taskId: task.id, projectId: task.projectId, archived: task.archived, pointerId: event.pointerId, handle: event.currentTarget,
+      startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, width: Math.min(260, row.getBoundingClientRect().width), title: task.title,
+      visibleTaskIds: projectTasks.map((item) => item.id), orderedTaskIds: projectTasks.map((item) => item.id), scrollContainer: row.closest<HTMLElement>(".workspace-content"), active: false, raf: null,
+    };
+  };
+  const moveReorder = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const session = dragSession.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    session.lastX = event.clientX;
+    session.lastY = event.clientY;
+    if (!session.active && Math.hypot(event.clientX - session.startX, event.clientY - session.startY) < LIST_DRAG_THRESHOLD) return;
+    event.preventDefault();
+    session.active = true;
+    setDragPreview({ taskId: session.taskId, title: session.title, x: event.clientX, y: event.clientY, width: session.width });
+    updateDropAtPoint(event.clientX, event.clientY);
+    if (session.raf === null) session.raf = window.requestAnimationFrame(autoScrollFrame);
+  };
+  const endReorder = (event: ReactPointerEvent<HTMLButtonElement>, cancelled = false) => {
+    const session = dragSession.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearDrag(cancelled);
+  };
+  const reorderWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>, task: Task, projectTasks: Task[]) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const visibleTaskIds = projectTasks.map((item) => item.id);
+    const from = visibleTaskIds.indexOf(task.id);
+    const to = Math.max(0, Math.min(visibleTaskIds.length - 1, from + (event.key === "ArrowUp" ? -1 : 1)));
+    if (from === to) return;
+    const orderedTaskIds = [...visibleTaskIds];
+    orderedTaskIds.splice(to, 0, orderedTaskIds.splice(from, 1)[0]);
+    const handle = event.currentTarget;
+    onReorder(task.projectId, task.archived, visibleTaskIds, orderedTaskIds);
+    window.setTimeout(() => handle.focus(), 0);
+  };
+
   return (
-    <div className="task-groups"><label className="list-select-all"><input ref={selectAll} type="checkbox" checked={allSelected} onChange={(event) => onSelectAll(event.target.checked)} /><span>{selectedVisible ? `已选择当前结果中的 ${selectedVisible} 项` : "选择当前视图"}</span></label>
+    <div className={`task-groups ${dragPreview ? "is-reordering" : ""}`}><label className="list-select-all"><input ref={selectAll} type="checkbox" checked={allSelected} onChange={(event) => onSelectAll(event.target.checked)} /><span>{selectedVisible ? `已选择当前结果中的 ${selectedVisible} 项` : "选择当前视图"}</span></label>
       {projects.map((project) => {
         const projectTasks = tasks.filter((task) => task.projectId === project.id);
         if (!projectTasks.length) return null;
@@ -165,12 +308,13 @@ function ListView({ projects, tasks, selectedTaskId, selectedTaskIds, onSelect, 
             <h2><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name}<span>{projectTasks.length}</span></h2>
             <div className="task-table">
               {projectTasks.map((task) => (
-                <TaskRow key={task.id} task={task} project={project} selected={selectedTaskId === task.id} multiSelected={selectedTaskIds.has(task.id)} onSelect={() => onSelect(task.id)} onToggle={() => onToggle(task.id)} onTogglePin={() => onTogglePin(task.id)} onMultiSelect={() => onMultiSelect(task.id)} />
+                <TaskRow key={task.id} task={task} project={project} selected={selectedTaskId === task.id} multiSelected={selectedTaskIds.has(task.id)} dragging={dragPreview?.taskId === task.id} dropPosition={dropIndicator?.taskId === task.id ? dropIndicator.position : null} onSelect={() => onSelect(task.id)} onToggle={() => onToggle(task.id)} onTogglePin={() => onTogglePin(task.id)} onMultiSelect={() => onMultiSelect(task.id)} onReorderPointerDown={(event) => beginReorder(event, task, projectTasks)} onReorderPointerMove={moveReorder} onReorderPointerEnd={endReorder} onReorderPointerLost={(event) => { if (dragSession.current?.pointerId === event.pointerId) clearDrag(true); }} onReorderKeyDown={(event) => reorderWithKeyboard(event, task, projectTasks)} />
               ))}
             </div>
           </section>
         );
       })}
+      {dragPreview && <div className="list-drag-preview" style={{ left: dragPreview.x + 13, top: dragPreview.y + 13, width: dragPreview.width }}><DotsSixVertical weight="bold" /><strong>{dragPreview.title}</strong></div>}
     </div>
   );
 }
@@ -377,6 +521,7 @@ function CreateTaskDialog({ projects, defaultProjectId, onClose, onCreate }: {
 
 function MainApp() {
   const { workspace, ready, commit, storageState, storageMessage } = useWorkspace(true);
+  const softwareUpdate = useSoftwareUpdate();
   const currentDate = useCurrentDate();
   const today = localIsoDate(currentDate);
   const [view, setView] = useState<View>({ kind: "today" });
@@ -463,6 +608,23 @@ function MainApp() {
   useEffect(() => {
     setSelectedTaskIds((current) => reconcileSelectedTaskIds(current, visibleTasks.map((task) => task.id)));
   }, [visibleTaskKey]);
+
+  const reorderVisibleTasks = (projectId: string, archived: boolean, visibleTaskIds: string[], orderedTaskIds: string[]) => {
+    if (view.kind === "integration" || view.kind === "settings") return;
+    const viewAtAction = view;
+    const searchAtAction = searchQuery;
+    const todayAtAction = today;
+    commit((current) => {
+      const currentVisibleTaskIds = searchTasks(tasksForView(current.tasks, viewAtAction, todayAtAction), current.projects, searchAtAction)
+        .filter((task) => task.projectId === projectId && task.archived === archived)
+        .map((task) => task.id);
+      const requestedIds = new Set(visibleTaskIds);
+      if (currentVisibleTaskIds.length !== requestedIds.size || currentVisibleTaskIds.some((taskId) => !requestedIds.has(taskId))) {
+        throw new Error("当前任务结果已变化，未保存这次排序");
+      }
+      return reorderTaskSubset(current, projectId, archived, currentVisibleTaskIds, orderedTaskIds);
+    });
+  };
 
   const selectedTask = workspace.tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedProject = selectedTask ? workspace.projects.find((project) => project.id === selectedTask.projectId) ?? null : null;
@@ -639,7 +801,7 @@ function MainApp() {
 
   return (
     <div className={`app-shell ${selectedTask && selectedProject ? "has-detail" : ""}`}>
-      <Sidebar projects={workspace.projects} view={view} version={workspace.version} storageState={storageState} storageMessage={storageMessage} integrationStatus={integrationStatus} integrationError={integrationError} openingSticky={openingSticky} onOpenSticky={() => void showSticky(true)} onView={(next) => { setView(next); setSelectedTaskIds(new Set()); if (next.kind === "integration" || next.kind === "settings") clearSelectedTask(); }} onCreate={beginTaskCreation} onCreateProject={() => { setCreateTaskAfterProject(false); setShowCreateProject(true); }} onEditProject={setEditingProjectId} />
+      <Sidebar projects={workspace.projects} view={view} currentVersion={softwareUpdate.currentVersion} updateAvailable={softwareUpdate.phase === "available"} storageState={storageState} storageMessage={storageMessage} integrationStatus={integrationStatus} integrationError={integrationError} openingSticky={openingSticky} onOpenSticky={() => void showSticky(true)} onView={(next) => { setView(next); setSelectedTaskIds(new Set()); if (next.kind === "integration" || next.kind === "settings") clearSelectedTask(); }} onCreate={beginTaskCreation} onCreateProject={() => { setCreateTaskAfterProject(false); setShowCreateProject(true); }} onEditProject={setEditingProjectId} />
       <main className="workspace-panel">
         {!ready && <div className="loading-bar" />}
         {showWorkspace ? <>
@@ -649,7 +811,7 @@ function MainApp() {
           </header>
            <div className={`workspace-content auto-hide-scrollbar ${display === "board" ? "board-workspace" : "list-workspace"}`} role="region" aria-label={`${currentTitle}${display === "board" ? "任务看板" : "任务列表"}`} tabIndex={0} {...workspaceScrollbar}>
              {display === "list" && selectedTaskIds.size > 0 && <div className="batch-action-bar"><strong>已选 {selectedTaskIds.size} 项</strong><span>仅包含当前视图与搜索结果</span><button type="button" onClick={() => setSelectedTaskIds(new Set())}>取消选择</button>{view.kind === "archived" ? <button type="button" className="danger-action" onClick={() => setPendingDeletion({ kind: "batch", taskIds: [...selectedTaskIds] })}><Trash />永久删除</button> : <button type="button" className="secondary-action" onClick={batchArchive}><Archive />批量归档</button>}</div>}
-             {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} selectedTaskIds={selectedTaskIds} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} onMultiSelect={toggleMultiSelection} onSelectAll={selectAllVisible} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : workspace.projects.length ? "这里还没有任务" : "从第一个项目开始"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : workspace.projects.length ? "点击左侧“新建任务”开始记录" : "新建任务时会先引导创建项目，首次使用不会自动添加演示数据"}</span></div>}
+             {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} selectedTaskIds={selectedTaskIds} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} onMultiSelect={toggleMultiSelection} onSelectAll={selectAllVisible} onReorder={reorderVisibleTasks} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : workspace.projects.length ? "这里还没有任务" : "从第一个项目开始"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : workspace.projects.length ? "点击左侧“新建任务”开始记录" : "新建任务时会先引导创建项目，首次使用不会自动添加演示数据"}</span></div>}
           </div>
           <footer className="workspace-footer">共 {visibleTasks.length} 个任务（未完成 {visibleTasks.filter((task) => task.status !== "done").length} 个）</footer>
         </> : view.kind === "integration" ? <IntegrationView onStatusChange={acceptIntegrationStatus} /> : <SettingsView workspace={workspace} onImport={importWorkspace} />}
@@ -726,5 +888,5 @@ function StickyApp() {
 }
 
 export function App() {
-  return new URLSearchParams(window.location.search).get("mode") === "sticky" ? <StickyApp /> : <MainApp />;
+  return new URLSearchParams(window.location.search).get("mode") === "sticky" ? <StickyApp /> : <SoftwareUpdateProvider><MainApp /></SoftwareUpdateProvider>;
 }

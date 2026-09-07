@@ -12,13 +12,14 @@ use toml_edit::{value, Array, DocumentMut, Item, Table};
 const SKILL_CONTENT: &str = include_str!("../../.agents/skills/todolist-mcp/SKILL.md");
 const MANAGED_MARKER: &str = "app.todolist.desktop\n";
 const MANAGED_COMMAND_FILE: &str = ".todolist-command";
-const MCP_TOOLS: [&str; 6] = [
+const MCP_TOOLS: [&str; 7] = [
     "list_projects",
     "create_project",
     "list_tasks",
     "get_task",
     "create_task",
     "update_task",
+    "reorder_tasks",
 ];
 
 #[derive(Clone)]
@@ -114,6 +115,33 @@ fn configured_server_exists(document: &DocumentMut) -> bool {
         .is_some_and(|servers| servers.contains_key("todolist"))
 }
 
+fn configured_tools_current(document: &DocumentMut) -> bool {
+    let Some(tools) = document
+        .as_table()
+        .get("mcp_servers")
+        .and_then(Item::as_table)
+        .and_then(|servers| servers.get("todolist"))
+        .and_then(Item::as_table)
+        .and_then(|server| server.get("enabled_tools"))
+        .and_then(Item::as_array)
+    else {
+        return false;
+    };
+    tools.len() == MCP_TOOLS.len()
+        && tools
+            .iter()
+            .zip(MCP_TOOLS)
+            .all(|(configured, expected)| configured.as_str() == Some(expected))
+}
+
+fn enabled_tools_value() -> toml_edit::Value {
+    let mut enabled_tools = Array::new();
+    for tool in MCP_TOOLS {
+        enabled_tools.push(tool);
+    }
+    toml_edit::Value::Array(enabled_tools)
+}
+
 fn read_managed_command(path: &Path) -> Option<String> {
     let metadata = fs::symlink_metadata(path).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -191,11 +219,12 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
     let document = read_document(&paths.codex_config)?;
     let command = configured_command(&document);
     let expected_command = display_path(&paths.mcp_executable);
-    let config_matches = command.is_some_and(|item| item == expected_command);
+    let command_matches = command.is_some_and(|item| item == expected_command);
+    let config_matches = command_matches && configured_tools_current(&document);
     let config_exists = configured_server_exists(&document);
     let skill = skill_state(paths)?;
     let managed_migration = command
-        .is_some_and(|item| !config_matches && is_managed_previous_command(paths, &skill, item));
+        .is_some_and(|item| !command_matches && is_managed_previous_command(paths, &skill, item));
 
     let (state, configured, can_configure, message) = if config_matches && skill.current {
         (
@@ -211,7 +240,7 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
             true,
             "检测到由 TodoList 管理的旧路径，可以迁移到当前安装",
         )
-    } else if (config_exists && !config_matches) || (skill.exists && !skill.managed) {
+    } else if (config_exists && !command_matches) || (skill.exists && !skill.managed) {
         (
             "conflict",
             false,
@@ -297,13 +326,19 @@ fn install_config(paths: &IntegrationPaths) -> Result<(), String> {
     let expected_command = display_path(&paths.mcp_executable);
     if let Some(command) = configured_command(&document).map(str::to_string) {
         if command == expected_command {
-            return Ok(());
+            if configured_tools_current(&document) {
+                return Ok(());
+            }
+            document["mcp_servers"]["todolist"]["enabled_tools"] = value(enabled_tools_value());
+            backup_file(&paths.codex_config)?;
+            return atomic_write(&paths.codex_config, &document.to_string());
         }
         let skill = skill_state(paths)?;
         if !is_managed_previous_command(paths, &skill, &command) {
             return Err("A different TodoList MCP server is already configured".to_string());
         }
         document["mcp_servers"]["todolist"]["command"] = value(expected_command);
+        document["mcp_servers"]["todolist"]["enabled_tools"] = value(enabled_tools_value());
         backup_file(&paths.codex_config)?;
         return atomic_write(&paths.codex_config, &document.to_string());
     }
@@ -322,11 +357,7 @@ fn install_config(paths: &IntegrationPaths) -> Result<(), String> {
     server["startup_timeout_sec"] = value(10);
     server["tool_timeout_sec"] = value(15);
     server["required"] = value(false);
-    let mut enabled_tools = Array::new();
-    for tool in MCP_TOOLS {
-        enabled_tools.push(tool);
-    }
-    server["enabled_tools"] = value(enabled_tools);
+    server["enabled_tools"] = value(enabled_tools_value());
     server["default_tools_approval_mode"] = value("writes");
     servers.insert("todolist", Item::Table(server));
 
@@ -502,6 +533,38 @@ mod tests {
         assert!(removed.contains("[mcp_servers.existing]"));
         assert!(!removed.contains("[mcp_servers.todolist]"));
         assert!(!paths.skill_directory.exists());
+    }
+
+    #[test]
+    fn refreshes_an_owned_six_tool_config_without_replacing_other_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        install_skill(&paths).unwrap();
+        write_managed_command(&paths).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "theme = \"dark\"\n[mcp_servers.existing]\ncommand = \"existing\"\n[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"list_projects\", \"create_project\", \"list_tasks\", \"get_task\", \"create_task\", \"update_task\"]\ncustom_setting = \"keep\"\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+
+        let outdated = inspect(&paths).unwrap();
+        assert_eq!(outdated.state, "partial");
+        assert!(outdated.can_configure);
+
+        install_config(&paths).unwrap();
+        let configured = fs::read_to_string(&paths.codex_config).unwrap();
+        assert!(configured.contains("theme = \"dark\""));
+        assert!(configured.contains("[mcp_servers.existing]"));
+        assert!(configured.contains("custom_setting = \"keep\""));
+        assert!(configured.contains("\"reorder_tasks\""));
+        assert!(configured_tools_current(
+            &configured.parse::<DocumentMut>().unwrap()
+        ));
+        assert!(inspect(&paths).unwrap().configured);
     }
 
     #[test]

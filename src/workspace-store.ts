@@ -98,7 +98,9 @@ async function saveWithRebase(initial: Workspace, updater: WorkspaceUpdater, res
       if (!isVersionConflict(error) || attempt === MAX_SAVE_ATTEMPTS - 1) throw error;
       const latest = await invoke<Workspace | null>("load_workspace");
       if (!latest) throw new Error("TodoList workspace disappeared while resolving a conflict");
-      candidate = updater(latest);
+      const rebased = updater(latest);
+      if (rebased === latest) return { workspace: latest, merged: true };
+      candidate = rebased;
       if (!restore) validateWorkspaceCompletion(latest, candidate);
       merged = true;
     }
@@ -197,6 +199,7 @@ export function useWorkspace(pollForExternalChanges = false) {
     let optimistic: Workspace;
     try {
       optimistic = updater(previous);
+      if (optimistic === previous) return;
       if (!restore) validateWorkspaceCompletion(previous, optimistic);
     } catch (error) {
       setStorageState("error");
@@ -231,6 +234,7 @@ export function useWorkspace(pollForExternalChanges = false) {
       // queued action to that result, or reload if the preceding action failed.
       const latest = queued ? lastSaved ?? await loadPersistedWorkspace() : undefined;
       const candidate = latest ? updater(latest) : optimistic;
+      if (latest && candidate === latest) return { workspace: latest, merged: false };
       if (!restore && latest) validateWorkspaceCompletion(latest, candidate);
       return saveWithRebase(candidate, updater, restore);
     });

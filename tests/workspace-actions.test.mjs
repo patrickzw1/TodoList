@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   archiveTasksById, deleteArchivedTasksById, deleteProjectWithTasks, moveProjectTasks,
-  moveProjectTasksToNewProject, reconcileSelectedTaskIds,
+  moveProjectTasksToNewProject, reconcileSelectedTaskIds, reorderTaskSubset,
 } from "../src/workspace-actions.ts";
 
 function task(id, projectId, archived = false) {
@@ -53,4 +53,42 @@ test("batch actions replay stable ids against latest archive state and leave hid
 
 test("selection is limited to the current filtered result", () => {
   assert.deepEqual([...reconcileSelectedTaskIds(["a", "b", "hidden"], ["b", "c"])], ["b"]);
+});
+
+test("reordering a visible project subset preserves hidden and unrelated task slots", () => {
+  const current = {
+    version: 20,
+    projects: workspace().projects,
+    tasks: [
+      task("visible-a", "source"),
+      task("hidden", "source"),
+      task("other", "target"),
+      task("visible-b", "source"),
+      task("archived", "source", true),
+      task("visible-c", "source"),
+    ],
+  };
+  current.tasks[1].description = "does not match the search";
+  const reordered = reorderTaskSubset(
+    current,
+    "source",
+    false,
+    ["visible-a", "visible-b", "visible-c"],
+    ["visible-c", "visible-a", "visible-b"],
+  );
+  assert.equal(reordered.version, 21);
+  assert.deepEqual(reordered.tasks.map((item) => item.id), [
+    "visible-c", "hidden", "other", "visible-a", "archived", "visible-b",
+  ]);
+  assert.deepEqual(reordered.tasks.find((item) => item.id === "other"), current.tasks[2]);
+  assert.deepEqual(reordered.tasks.find((item) => item.id === "archived"), current.tasks[4]);
+});
+
+test("reordering rejects stale scope and skips no-op revisions", () => {
+  const current = workspace();
+  assert.equal(reorderTaskSubset(current, "source", false, ["active"], ["active"]), current);
+  assert.throws(() => reorderTaskSubset(current, "source", false, ["active", "active"], ["active", "active"]), /重复/);
+  assert.throws(() => reorderTaskSubset(current, "source", false, ["active", "archived"], ["archived", "active"]), /列表已变化/);
+  assert.throws(() => reorderTaskSubset(current, "source", false, ["active", "other"], ["other", "active"]), /列表已变化/);
+  assert.equal(current.version, 4);
 });

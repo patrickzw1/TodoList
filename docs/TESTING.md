@@ -1,5 +1,13 @@
 # MVP verification and remaining work
 
+## v0.2.3 development candidate — 2026-09-07
+
+- 53 Rust tests, 52 frontend tests, 4 build-channel checks and 4 Sites checks passed, together with TypeScript checking, formatting/diff checks, the production frontend build and a seven-tool MCP STDIO smoke test against a unique temporary SQLite database.
+- Browser acceptance covered handle-only list reordering, keyboard reordering, filtered and archived subsets, persistence after reload, edge auto-scroll, invalid cross-project cancellation, software-version rendering and browser update-source isolation. No browser warnings or errors were recorded.
+- Sidebar acceptance used 22 isolated demo projects. The project list alone overflowed and scrolled with a permanently hidden scrollbar; task creation and primary navigation stayed fixed above it, and Desktop Note, integration, Settings/version and storage state stayed fixed below it. Whole-group collapse/expand retained the project scroll position, and keyboard focus brought the last off-screen project into view.
+- A temporary-directory integration regression starts from an owned six-tool `todolist` entry, reports it as partial, refreshes it to include `reorder_tasks`, and proves unrelated settings, another MCP server and a custom TodoList setting remain unchanged.
+- No installer, daily application database, global MCP registration or installed Skill was exercised. Automatic update installation remains explicit, and this development candidate has not been committed, pushed, tagged or published.
+
 ## v0.2.1 local release candidate — 2026-09-07
 
 - `scripts/build-release.ps1` produced the Windows x64 NSIS installer, its Tauri updater signature, `latest.json` and `SHA256SUMS.txt` from the unified `0.2.1` package, Tauri and Rust versions. The candidate has not been committed, pushed, tagged, installed or uploaded.

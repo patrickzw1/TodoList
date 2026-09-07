@@ -72,3 +72,36 @@ export function reconcileSelectedTaskIds(selected: Iterable<string>, visibleTask
   const visible = new Set(visibleTaskIds);
   return new Set([...selected].filter((taskId) => visible.has(taskId)));
 }
+
+export function reorderTaskSubset(
+  workspace: Workspace,
+  projectId: string,
+  archived: boolean,
+  visibleTaskIds: readonly string[],
+  orderedTaskIds: readonly string[],
+) {
+  if (visibleTaskIds.length !== orderedTaskIds.length) throw new Error("排序任务集合不一致，请刷新后重试");
+  const visible = new Set(visibleTaskIds);
+  const ordered = new Set(orderedTaskIds);
+  if (visible.size !== visibleTaskIds.length || ordered.size !== orderedTaskIds.length || ordered.size !== visible.size) {
+    throw new Error("排序任务包含重复或缺失项，请刷新后重试");
+  }
+  if (orderedTaskIds.some((taskId) => !visible.has(taskId))) throw new Error("排序任务集合不一致，请刷新后重试");
+
+  const tasksById = new Map(workspace.tasks.map((task) => [task.id, task]));
+  for (const taskId of visibleTaskIds) {
+    const task = tasksById.get(taskId);
+    if (!task || task.projectId !== projectId || task.archived !== archived) {
+      throw new Error("任务列表已变化，请刷新后重试排序");
+    }
+  }
+
+  const currentOrder = workspace.tasks.filter((task) => visible.has(task.id)).map((task) => task.id);
+  if (currentOrder.every((taskId, index) => taskId === orderedTaskIds[index])) return workspace;
+
+  let orderedIndex = 0;
+  const tasks = workspace.tasks.map((task) => visible.has(task.id)
+    ? tasksById.get(orderedTaskIds[orderedIndex++])!
+    : task);
+  return changedWorkspace(workspace, tasks);
+}

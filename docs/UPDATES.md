@@ -4,9 +4,9 @@ TodoList uses the Tauri updater for application-update integrity. This signature
 
 ## User flow
 
-1. The user opens Settings and checks for updates.
-2. TodoList reads the configured HTTPS update endpoint.
-3. A newer version is downloaded first. Installation begins only after the Tauri signature has been verified; a network or signature failure does not claim that a retryable installer exists.
+1. A production desktop build performs a non-blocking update check after launch, then throttles background focus/visibility checks to once per six hours. The user can also check from Settings. Browser previews never contact the updater, and development builds have no production endpoint.
+2. When a newer version exists, the sidebar Settings row shows a quiet update badge and Settings shows both installed and available versions. Offline or failed checks never claim that the current build is latest.
+3. Download and installation begin only after the user clicks the update action. Installation starts only after the Tauri signature has been verified; a network or signature failure does not claim that a retryable installer exists.
 4. On Windows, the installer stops only the TodoList GUI and MCP executables resolved inside the selected installation directory. Codex, development builds and other installations remain running.
 5. The installer stages the previous GUI and MCP as one transaction. While replacement is in progress, an installation marker makes an independently restarted MCP exit with a retryable update-in-progress error.
 6. Success is recorded only after the installed GUI version and MCP build identity both match. After that commit point, cache cleanup cannot roll the installation back or report it as failed. A hidden helper waits for the installer process to exit, rechecks both components, and removes only that automatic-update installer and its owned cache directory. If cleanup is temporarily blocked, the installed result remains successful and TodoList retries the owned cleanup on a later startup.
