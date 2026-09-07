@@ -1,6 +1,6 @@
 [package]
 name = "todolist-desktop"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local-first TodoList desktop app with optional MCP integration"
 authors = ["TodoList contributors"]
 edition = "2021"
