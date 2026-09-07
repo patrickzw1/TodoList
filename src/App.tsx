@@ -1,5 +1,5 @@
 import {
-  Archive, ArrowCounterClockwise, ArrowUp, CaretDown, CheckCircle, Circle, Columns, Folder, Gear, LinkSimple,
+  Archive, ArrowCounterClockwise, ArrowsInSimple, ArrowsOutSimple, ArrowUp, CaretDown, CheckCircle, Circle, Columns, Folder, Gear, LinkSimple,
   List, LockKey, MagnifyingGlass, PencilSimple, Play, Plus, PushPin, PushPinSlash, Sun, Trash, X,
 } from "@phosphor-icons/react";
 import { isTauri, invoke } from "@tauri-apps/api/core";
@@ -175,6 +175,41 @@ function ListView({ projects, tasks, selectedTaskId, selectedTaskIds, onSelect, 
   );
 }
 
+function BoardColumn({ status, projects, tasks, isDropTarget, draggingTaskId, onSelect, onToggle, onStatusChange, onPointerDown, onPointerMove, onPointerEnd }: {
+  status: TaskStatus;
+  projects: Project[];
+  tasks: Task[];
+  isDropTarget: boolean;
+  draggingTaskId: string | null;
+  onSelect: (id: string) => void;
+  onToggle: (id: string) => void;
+  onStatusChange: (id: string, status: TaskStatus) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>, task: Task, project: Project) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerEnd: (event: ReactPointerEvent<HTMLDivElement>, cancelled?: boolean) => void;
+}) {
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
+  const statusTasks = tasks.filter((task) => task.status === status);
+
+  return (
+    <section className={`board-column ${isDropTarget ? "drop-target" : ""}`} data-board-status={status}>
+      <h3>{statusLabel[status]}<span>{statusTasks.length}</span></h3>
+      <div className="board-column-scroll auto-hide-scrollbar" role="region" aria-label={`${statusLabel[status]}任务`} tabIndex={0} {...scrollbar}>
+        {statusTasks.map((task) => {
+          const project = projects.find((item) => item.id === task.projectId)!;
+          return (
+            <div className={`board-card ${draggingTaskId === task.id ? "is-dragging" : ""}`} role="button" tabIndex={0} key={task.id} onPointerDown={(event) => onPointerDown(event, task, project)} onPointerMove={onPointerMove} onPointerUp={(event) => onPointerEnd(event)} onPointerCancel={(event) => onPointerEnd(event, true)} onClick={() => onSelect(task.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(task.id); }}>
+              <span className="board-card-title"><StatusButton task={task} onToggle={() => onToggle(task.id)} />{task.title}</span>
+              <span className="board-card-meta"><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name} · {taskDueLabel(task.dueDate, task.dueLabel)}</span>
+              <select className="board-status-select" value={task.status} onClick={(event) => event.stopPropagation()} onChange={(event) => onStatusChange(task.id, event.target.value as TaskStatus)} aria-label={`修改 ${task.title} 的状态`}><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="done">已完成</option></select>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function BoardView({ projects, tasks, onSelect, onToggle, onStatusChange }: {
   projects: Project[]; tasks: Task[]; onSelect: (id: string) => void; onToggle: (id: string) => void; onStatusChange: (id: string, status: TaskStatus) => void;
 }) {
@@ -220,19 +255,26 @@ function BoardView({ projects, tasks, onSelect, onToggle, onStatusChange }: {
   return (
     <div className={`board ${dragPreview ? "is-dragging" : ""}`}>
       {statusOrder.map((status) => (
-        <section className={`board-column ${dropTarget === status ? "drop-target" : ""}`} data-board-status={status} key={status}>
-          <h3>{statusLabel[status]}<span>{tasks.filter((task) => task.status === status).length}</span></h3>
-          {tasks.filter((task) => task.status === status).map((task) => {
-            const project = projects.find((item) => item.id === task.projectId)!;
-            return (
-              <div className={`board-card ${dragPreview?.taskId === task.id ? "is-dragging" : ""}`} role="button" tabIndex={0} key={task.id} onPointerDown={(event) => startDrag(event, task, project)} onPointerMove={moveDrag} onPointerUp={(event) => finishDrag(event)} onPointerCancel={(event) => finishDrag(event, true)} onClick={() => { if (suppressClickTaskId.current === task.id) { suppressClickTaskId.current = null; return; } onSelect(task.id); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(task.id); }}>
-                <span className="board-card-title"><StatusButton task={task} onToggle={() => onToggle(task.id)} />{task.title}</span>
-                <span className="board-card-meta"><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name} · {taskDueLabel(task.dueDate, task.dueLabel)}</span>
-                <select className="board-status-select" value={task.status} onClick={(event) => event.stopPropagation()} onChange={(event) => onStatusChange(task.id, event.target.value as TaskStatus)} aria-label={`修改 ${task.title} 的状态`}><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="done">已完成</option></select>
-              </div>
-            );
-          })}
-        </section>
+        <BoardColumn
+          key={status}
+          status={status}
+          projects={projects}
+          tasks={tasks}
+          isDropTarget={dropTarget === status}
+          draggingTaskId={dragPreview?.taskId ?? null}
+          onSelect={(taskId) => {
+            if (suppressClickTaskId.current === taskId) {
+              suppressClickTaskId.current = null;
+              return;
+            }
+            onSelect(taskId);
+          }}
+          onToggle={onToggle}
+          onStatusChange={onStatusChange}
+          onPointerDown={startDrag}
+          onPointerMove={moveDrag}
+          onPointerEnd={finishDrag}
+        />
       ))}
       {dragPreview && <div className="board-drag-preview" style={{ left: dragPreview.x + 14, top: dragPreview.y + 14, width: dragPreview.width }}><strong>{dragPreview.title}</strong><span>{dragPreview.meta}</span></div>}
     </div>
@@ -244,13 +286,14 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
 }) {
   const completedSubtasks = task.subtasks.filter((item) => item.completed).length;
   const [activityExpanded, setActivityExpanded] = useState(false);
+  const [detailExpanded, setDetailExpanded] = useState(false);
   const scrollbar = useAutoHideScrollbar<HTMLElement>();
   const visibleActivity = activityItemsForDetail(task.activity, activityExpanded);
   useEffect(() => setActivityExpanded(false), [task.id]);
   return (
-    <aside className={`detail-panel auto-hide-scrollbar ${closing ? "is-closing" : ""}`} {...scrollbar}>
+    <aside className={`detail-panel auto-hide-scrollbar ${detailExpanded ? "is-expanded" : ""} ${closing ? "is-closing" : ""}`} {...scrollbar}>
       <div className="detail-breadcrumb">{project.name}<span>›</span>{task.title}</div>
-      <div className="detail-title-row"><h2>{task.title}</h2><div className="detail-title-actions"><button className={`icon-button detail-pin-button ${task.pinned ? "is-pinned" : ""}`} onClick={onTogglePin} aria-label={task.pinned ? "取消桌面置顶" : "置顶到桌面"} aria-pressed={task.pinned} title={task.pinned ? "取消桌面置顶" : "置顶到桌面"}><PushPin weight={task.pinned ? "fill" : "regular"} /></button><button className="icon-button" onClick={onEdit} aria-label="编辑任务" title="编辑任务"><PencilSimple /></button><button className="icon-button" onClick={onClose} aria-label="关闭详情"><X /></button></div></div>
+      <div className="detail-title-row"><h2>{task.title}</h2><div className="detail-title-actions"><button type="button" className={`icon-button detail-expand-button ${detailExpanded ? "is-expanded" : ""}`} onClick={() => setDetailExpanded((current) => !current)} aria-label={detailExpanded ? "收起任务详情" : "展开任务详情"} aria-pressed={detailExpanded} title={detailExpanded ? "收起任务详情" : "展开任务详情"}>{detailExpanded ? <ArrowsInSimple /> : <ArrowsOutSimple />}</button><button className={`icon-button detail-pin-button ${task.pinned ? "is-pinned" : ""}`} onClick={onTogglePin} aria-label={task.pinned ? "取消桌面置顶" : "置顶到桌面"} aria-pressed={task.pinned} title={task.pinned ? "取消桌面置顶" : "置顶到桌面"}><PushPin weight={task.pinned ? "fill" : "regular"} /></button><button className="icon-button" onClick={onEdit} aria-label="编辑任务" title="编辑任务"><PencilSimple /></button><button className="icon-button" onClick={onClose} aria-label="关闭详情"><X /></button></div></div>
       <dl className="task-meta">
         <div><dt>状态</dt><dd><span className={`state-dot ${task.status}`} />{statusLabel[task.status]}</dd></div>
         <div><dt>优先级</dt><dd>{task.priority === "high" && <ArrowUp className="priority-arrow" />} {task.priority === "high" ? "高" : task.priority === "medium" ? "中" : "低"}</dd></div>
@@ -356,6 +399,7 @@ function MainApp() {
   const [integrationStatus, setIntegrationStatus] = useState<CodexIntegrationStatus | null>(null);
   const [integrationError, setIntegrationError] = useState("");
   const openingStickyRef = useRef(false);
+  const workspaceScrollbar = useAutoHideScrollbar<HTMLDivElement>();
   const acceptIntegrationStatus = useCallback((status: CodexIntegrationStatus) => {
     setIntegrationStatus(status);
     setIntegrationError("");
@@ -603,7 +647,7 @@ function MainApp() {
             <div><h1>{currentTitle}<span>{todayHeading(currentDate)}</span></h1><p>{view.kind === "today" ? "包含所有项目中今天、到期或逾期的任务" : view.kind === "all" ? "所有项目中的未归档任务，包括未安排日期的待办" : view.kind === "active" ? "所有项目中正在处理的任务" : view.kind === "archived" ? "已归档任务可恢复或永久删除" : "查看和安排这个项目的任务"}</p></div>
              <div className="workspace-tools">{searchOpen ? <div className="search-box"><MagnifyingGlass /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); setSearchQuery(""); } }} placeholder={`搜索${currentTitle || "当前视图"}`} aria-label="搜索当前视图" /><button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} aria-label="关闭搜索"><X /></button></div> : <button className="search-trigger" aria-label="搜索当前视图" onClick={() => setSearchOpen(true)}><MagnifyingGlass /><span>搜索</span></button>}<div className="view-switch"><button className={display === "list" ? "active" : ""} onClick={() => setDisplay("list")}><List />列表</button><button className={display === "board" ? "active" : ""} onClick={() => { setDisplay("board"); setSelectedTaskIds(new Set()); }}><Columns />看板</button></div></div>
           </header>
-           <div className="workspace-content">
+           <div className={`workspace-content auto-hide-scrollbar ${display === "board" ? "board-workspace" : "list-workspace"}`} role="region" aria-label={`${currentTitle}${display === "board" ? "任务看板" : "任务列表"}`} tabIndex={0} {...workspaceScrollbar}>
              {display === "list" && selectedTaskIds.size > 0 && <div className="batch-action-bar"><strong>已选 {selectedTaskIds.size} 项</strong><span>仅包含当前视图与搜索结果</span><button type="button" onClick={() => setSelectedTaskIds(new Set())}>取消选择</button>{view.kind === "archived" ? <button type="button" className="danger-action" onClick={() => setPendingDeletion({ kind: "batch", taskIds: [...selectedTaskIds] })}><Trash />永久删除</button> : <button type="button" className="secondary-action" onClick={batchArchive}><Archive />批量归档</button>}</div>}
              {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} selectedTaskIds={selectedTaskIds} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} onMultiSelect={toggleMultiSelection} onSelectAll={selectAllVisible} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : workspace.projects.length ? "这里还没有任务" : "从第一个项目开始"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : workspace.projects.length ? "点击左侧“新建任务”开始记录" : "新建任务时会先引导创建项目，首次使用不会自动添加演示数据"}</span></div>}
           </div>

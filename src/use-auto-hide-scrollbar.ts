@@ -26,8 +26,11 @@ export function useAutoHideScrollbar<T extends HTMLElement>() {
   const onPointerMove = useCallback((event: ReactPointerEvent<T>) => {
     const element = event.currentTarget;
     const bounds = element.getBoundingClientRect();
-    const isScrollable = element.scrollHeight > element.clientHeight + 1;
-    element.classList.toggle("is-scrollbar-near", isScrollable && bounds.right - event.clientX <= SCROLLBAR_HOT_ZONE_PX);
+    const nearVerticalScrollbar = element.scrollHeight > element.clientHeight + 1
+      && bounds.right - event.clientX <= SCROLLBAR_HOT_ZONE_PX;
+    const nearHorizontalScrollbar = element.scrollWidth > element.clientWidth + 1
+      && bounds.bottom - event.clientY <= SCROLLBAR_HOT_ZONE_PX;
+    element.classList.toggle("is-scrollbar-near", nearVerticalScrollbar || nearHorizontalScrollbar);
   }, []);
 
   const onPointerLeave = useCallback((event: ReactPointerEvent<T>) => {
