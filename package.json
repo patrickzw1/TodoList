@@ -13,6 +13,8 @@
     "build:desktop": "node scripts/desktop.mjs build",
     "preview": "vite preview",
     "test:mcp-stdio": "node scripts/mcp-stdio-smoke.mjs",
+    "test:release-automation": "node tests/release-automation.test.mjs",
+    "test:release-powershell": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release-powershell-parse.test.ps1",
     "test:channels": "node --test tests/build-channels.test.mjs",
     "test:installer-coordinator": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests/windows-updater-coordinator.test.ps1",
     "test:installer-hooks": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/windows-nsis-hooks.test.ps1",

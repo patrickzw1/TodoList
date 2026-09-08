@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable tag to build, such as v0.2.5
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Verify, sign and publish Windows release
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the existing tag and version
+        shell: pwsh
+        run: ./scripts/validate-release-ref.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Select the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --no-self-update
+          rustup default 1.98.0
+          rustc --version
+          cargo --version
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Run frontend application tests
+        run: npm run test:app
+
+      - name: Verify build-channel isolation
+        run: npm run test:channels
+
+      - name: Test release automation contract
+        run: npm run test:release-automation
+
+      - name: Parse release PowerShell scripts
+        run: npm run test:release-powershell
+
+      - name: Build frontend and Sites output
+        run: npm run build
+
+      - name: Test Sites worker contract
+        run: npm run test:sites
+
+      - name: Run Rust workspace tests
+        run: cargo test --workspace --locked --no-fail-fast
+
+      - name: Build signed Windows release assets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/build-release.ps1
+
+      - name: Verify signatures, identities and release assets
+        run: node scripts/verify-release.mjs --tag "$env:RELEASE_TAG" --repository "$env:GITHUB_REPOSITORY"
+
+      - name: Upload a verified draft and publish it
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          ./scripts/publish-github-release.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -Repository $env:GITHUB_REPOSITORY `
+            -BundleDirectory 'target/package-build/release/bundle/nsis' `
+            -NotesPath "docs/RELEASE_NOTES_v$version.md"

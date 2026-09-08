@@ -21,29 +21,51 @@ The public repository is `patrickzw1/TodoList`. Windows release builds merge
 `src-tauri/tauri.release.conf.json`, which contains the public verification key and
 the GitHub `latest.json` endpoint. It also restores the production application identifier/name, enables the `production` feature for both the desktop and sidecar, and selects the reviewed TodoList NSIS template and lifecycle hooks. It contains no private signing material. Ordinary local builds use the independent development database even when compiled with release optimizations.
 
-On the release maintainer's Windows machine, run:
+GitHub Actions is the primary release environment:
 
-```powershell
-./scripts/build-release.ps1
-```
+- `.github/workflows/ci.yml` runs TypeScript, frontend application, build-channel, Sites and Rust workspace checks for pushes to `main`, pull requests and explicit manual CI runs. It has read-only repository permission and never receives signing secrets.
+- `.github/workflows/release.yml` builds and publishes only after a stable `vMAJOR.MINOR.PATCH` tag is pushed. Its optional manual dispatch does not create a tag: the supplied tag must already exist, point to the checked-out commit, be contained in `origin/main` and exactly match `package.json`.
+- The release job tests the tagged source, builds the production GUI, production MCP sidecar and signed NSIS package on Windows, then verifies the updater signature, manifest, checksums, executable identities, PE subsystems and private build-path scan.
+- The four expected assets are uploaded to a draft first. The workflow downloads them again and compares their sizes and SHA-256 hashes before making the release public. Any earlier failure leaves no public release. A published tag is never overwritten.
 
-This builds the signed NSIS installer in `target/package-build/release/bundle/nsis`
-and creates its signature, `latest.json`, and `SHA256SUMS.txt`. Upload these four
-files to the matching `v<version>` GitHub release. A normal release is required
-for GitHub's `/releases/latest` endpoint; prereleases do not become that endpoint.
+The release workflow requires exactly these repository Actions secrets under
+**Settings → Secrets and variables → Actions**:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: the complete private Tauri updater key value.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password for that private key.
+
+Do not put either value in workflow YAML, repository variables, logs or release
+assets. Pull-request and ordinary CI jobs do not reference these secrets. The
+public updater key remains in `src-tauri/tauri.release.conf.json`.
+
+To release a version, first update every package/Tauri/Rust version and its
+`docs/RELEASE_NOTES_v<version>.md`, merge the tested commit to `main`, then create
+and push the matching annotated tag. Pushing the tag is the production-build
+trigger; an ordinary source push only runs CI. If a run needs retrying without
+moving the tag, manually dispatch **Release** with that existing tag. A failed
+upload may retain a workflow-owned draft; the retry safely replaces only the four
+known assets in that marked draft. An unowned draft or any public release causes
+the workflow to stop for manual review.
+
+The build creates `TodoList_<version>_x64-setup.exe`, its `.sig`, `latest.json`
+and `SHA256SUMS.txt` under `target/package-build/release/bundle/nsis`. A normal
+release is required for GitHub's `/releases/latest` endpoint; prereleases do not
+become that endpoint.
 
 The signing build remaps the maintainer's checkout and user-directory paths in Rust output and uses a neutral Windows debug-record path. This keeps personal build paths out of the distributed executables. Do not upload PDBs, databases, managed user files, or internal design-session records with a release.
 
-Keep production outputs out of `target/development`: the sidecar preparation script refuses that destination for production builds. The signing script selects `target/package-build` automatically. For an unsigned local production build check, set `CARGO_TARGET_DIR` to `target/package-build` and run `npm run build:desktop -- --no-bundle --config src-tauri/tauri.release.conf.json`.
+Keep production outputs out of `target/development`: the sidecar preparation script refuses that destination for production builds, and the signing script selects `target/package-build` automatically.
 
-The encrypted private key is outside the repository under
+The optional maintainer fallback keeps its encrypted private key outside the repository under
 `%LOCALAPPDATA%\TodoListRelease\signing\updater.key`; its random password is stored
 beside it in `updater.password.dpapi`, protected with Windows DPAPI for the current
 user. The build script places credentials in its process environment only and
 restores the original environment afterward. Neither private file belongs in Git
 or release assets. DPAPI is tied to the Windows account: before moving or
 reinstalling this machine, retain an independently encrypted offline backup of
-the key and its decrypted password. CI signing remains a separate setup step.
+the key and its decrypted password. `scripts/build-release.ps1` prefers the two
+explicit environment variables in GitHub Actions and falls back to these DPAPI
+files only during an intentional local maintainer build.
 
 Do not close Codex for an update. The Windows installer coordinates the installed sidecar by its resolved executable path and leaves Codex itself running; a sidecar restart during replacement receives the update-in-progress error and can retry after installation completes.
 
@@ -55,6 +77,6 @@ Development and web-preview builds intentionally have no update endpoint. Copy `
 npm run tauri build -- --config src-tauri/tauri.release.conf.json
 ```
 
-Generate the Tauri updater key outside this repository. Keep the private key and its password in CI secrets; never commit them or place them in the install package. The public key belongs in the release configuration. Release builds require `TAURI_SIGNING_PRIVATE_KEY` and, when applicable, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the build environment.
+Generate the Tauri updater key outside this repository. Keep the private key and its password in CI secrets; never commit them or place them in the install package. The public key belongs in the release configuration. Release builds require both `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the build environment.
 
 The release pipeline must publish the generated updater artifact, its `.sig`, and a matching `latest.json`. Losing the private key prevents shipping trusted updates to existing installations, so retain an encrypted offline backup.

@@ -1,20 +1,31 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$signingDirectory = Join-Path $env:LOCALAPPDATA 'TodoListRelease\signing'
-$privateKey = Join-Path $signingDirectory 'updater.key'
-$passwordFile = Join-Path $signingDirectory 'updater.password.dpapi'
-if (-not (Test-Path -LiteralPath $privateKey) -or -not (Test-Path -LiteralPath $passwordFile)) {
-    throw 'Release signing material is missing. See docs/UPDATES.md.'
-}
-
 $variables = @('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'CARGO_ENCODED_RUSTFLAGS')
 $previousEnvironment = @{}
 foreach ($name in $variables) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location $projectRoot
 try {
-    $securePassword = Get-Content -LiteralPath $passwordFile -Raw | ConvertTo-SecureString
-    $env:TAURI_SIGNING_PRIVATE_KEY = $privateKey
-    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Net.NetworkCredential]::new('', $securePassword).Password
+    $environmentKey = [Environment]::GetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY', 'Process')
+    $environmentPassword = [Environment]::GetEnvironmentVariable('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'Process')
+    $hasEnvironmentKey = -not [string]::IsNullOrWhiteSpace($environmentKey)
+    $hasEnvironmentPassword = -not [string]::IsNullOrWhiteSpace($environmentPassword)
+    if ($hasEnvironmentKey -or $hasEnvironmentPassword) {
+        if (-not $hasEnvironmentKey -or -not $hasEnvironmentPassword) {
+            throw 'Both TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD are required.'
+        }
+    } elseif ($env:GITHUB_ACTIONS -eq 'true') {
+        throw 'GitHub Actions release signing Secrets are missing. See docs/UPDATES.md.'
+    } else {
+        $signingDirectory = Join-Path $env:LOCALAPPDATA 'TodoListRelease\signing'
+        $privateKey = Join-Path $signingDirectory 'updater.key'
+        $passwordFile = Join-Path $signingDirectory 'updater.password.dpapi'
+        if (-not (Test-Path -LiteralPath $privateKey) -or -not (Test-Path -LiteralPath $passwordFile)) {
+            throw 'Local release signing material is missing. See docs/UPDATES.md.'
+        }
+        $securePassword = Get-Content -LiteralPath $passwordFile -Raw | ConvertTo-SecureString
+        $env:TAURI_SIGNING_PRIVATE_KEY = $privateKey
+        $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Net.NetworkCredential]::new('', $securePassword).Password
+    }
     $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'target\package-build'
     $env:CARGO_BUILD_JOBS = '1'
     # Keep developer paths out of Rust panic strings and Windows debug-directory records.
