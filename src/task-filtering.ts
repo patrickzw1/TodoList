@@ -1,4 +1,5 @@
 import type { Project, Task } from "./types";
+import { isDueDateOnOrBefore } from "./date-utils.ts";
 
 export type TaskListView =
   | { kind: "today" }
@@ -12,7 +13,7 @@ export function tasksForView(tasks: Task[], view: TaskListView, today: string) {
   if (view.kind === "archived") return tasks.filter((task) => task.archived);
   if (view.kind === "active") return tasks.filter((task) => !task.archived && task.status === "in_progress");
   if (view.kind === "project") return tasks.filter((task) => !task.archived && task.projectId === view.projectId);
-  return tasks.filter((task) => !task.archived && task.dueDate <= today);
+  return tasks.filter((task) => !task.archived && isDueDateOnOrBefore(task.dueDate, today));
 }
 
 export function searchTasks(tasks: Task[], projects: Project[], searchQuery: string) {

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, formatActivityTime, taskWithUserActivity } from "../src/task-activity.ts";
 import { resolveDefaultProjectId } from "../src/task-creation.ts";
 import { searchTasks, tasksForView } from "../src/task-filtering.ts";
 import { reconcileAcceptanceCriteria, reconcileSubtasks } from "../src/task-checklists.ts";
+import { isDueDateOnOrBefore, normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "../src/date-utils.ts";
 
 function makeTask(activity = []) {
   return {
@@ -84,6 +86,52 @@ test("all view includes unscheduled work but excludes archived tasks", () => {
     tasksForView([unscheduled, completed, archived], { kind: "all" }, "2026-09-05").map((task) => task.id),
     ["unscheduled", "completed"],
   );
+});
+
+test("today includes only valid dates on or before today and leaves unscheduled legacy data in broader views", () => {
+  const noDateTasks = [
+    { ...makeTask(), id: "empty", dueLabel: "未安排", dueDate: "" },
+    { ...makeTask(), id: "whitespace", dueLabel: "未安排", dueDate: "   " },
+    { ...makeTask(), id: "sentinel", dueLabel: "未安排", dueDate: UNSCHEDULED_DUE_DATE },
+    { ...makeTask(), id: "invalid-format", dueLabel: "未安排", dueDate: "2026-9-8" },
+    { ...makeTask(), id: "invalid-calendar", dueLabel: "未安排", dueDate: "2026-02-29" },
+  ];
+  const datedTasks = [
+    { ...makeTask(), id: "overdue", status: "done", priority: "low", dueDate: "2026-09-07" },
+    { ...makeTask(), id: "today", status: "blocked", priority: "high", dueDate: "2026-09-08" },
+    { ...makeTask(), id: "future", dueDate: "2026-09-09" },
+    { ...makeTask(), id: "archived-overdue", dueDate: "2026-09-07", archived: true },
+  ];
+  const tasks = [...noDateTasks, ...datedTasks];
+
+  assert.deepEqual(
+    tasksForView(tasks, { kind: "today" }, "2026-09-08").map((task) => task.id),
+    ["overdue", "today"],
+  );
+  assert.deepEqual(
+    tasksForView(tasks, { kind: "all" }, "2026-09-08").map((task) => task.id),
+    [...noDateTasks.map((task) => task.id), "overdue", "today", "future"],
+  );
+  assert.deepEqual(
+    tasksForView(tasks, { kind: "project", projectId: "project-1" }, "2026-09-08").map((task) => task.id),
+    [...noDateTasks.map((task) => task.id), "overdue", "today", "future"],
+  );
+});
+
+test("date helpers validate calendar dates and UI clearing uses the unscheduled sentinel", () => {
+  assert.equal(isDueDateOnOrBefore("2024-02-29", "2024-02-29"), true);
+  assert.equal(isDueDateOnOrBefore("2026-02-29", "2026-09-08"), false);
+  assert.equal(isDueDateOnOrBefore("", "2026-09-08"), false);
+  assert.equal(isDueDateOnOrBefore(UNSCHEDULED_DUE_DATE, "2026-09-08"), false);
+  assert.equal(normalizeOptionalDueDate(""), UNSCHEDULED_DUE_DATE);
+  assert.equal(normalizeOptionalDueDate("   "), UNSCHEDULED_DUE_DATE);
+  assert.equal(normalizeOptionalDueDate("2026-09-08"), "2026-09-08");
+});
+
+test("list and board render the same filtered visible task collection", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(appSource, /<ListView[^>]+tasks=\{visibleTasks\}/);
+  assert.match(appSource, /<BoardView[^>]+tasks=\{visibleTasks\}/);
 });
 
 test("search filters only the supplied view and matches task and project details", () => {

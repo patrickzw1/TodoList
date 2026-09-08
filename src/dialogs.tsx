@@ -1,6 +1,7 @@
 import { Plus, X } from "@phosphor-icons/react";
 import { FormEvent, useMemo, useState } from "react";
 import type { AcceptanceCriterion, Priority, Project, Subtask, Task, TaskStatus } from "./types";
+import { normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "./date-utils.ts";
 import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
 import { reconcileAcceptanceCriteria, reconcileSubtasks } from "./task-checklists";
 
@@ -38,7 +39,7 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
   const [projectId, setProjectId] = useState(task.projectId);
   const [status, setStatus] = useState<TaskStatus>(task.status);
   const [priority, setPriority] = useState<Priority>(task.priority);
-  const [dueDate, setDueDate] = useState(task.dueDate === "9999-12-31" ? "" : task.dueDate);
+  const [dueDate, setDueDate] = useState(task.dueDate === UNSCHEDULED_DUE_DATE ? "" : task.dueDate);
   const [tags, setTags] = useState(task.tags.join("，"));
   const [subtasks, setSubtasks] = useState(task.subtasks.map((item) => item.title).join("\n"));
   const [acceptanceCriteria, setAcceptanceCriteria] = useState(task.acceptanceCriteria.map((item) => item.title).join("\n"));
@@ -49,7 +50,7 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
     event.preventDefault();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
-    const resolvedDueDate = dueDate || "9999-12-31";
+    const resolvedDueDate = normalizeOptionalDueDate(dueDate);
     onSave({
       title: trimmedTitle,
       description: description.trim(),
@@ -57,7 +58,7 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
       status,
       priority,
       dueDate: resolvedDueDate,
-      dueLabel: resolvedDueDate === "9999-12-31" ? "未安排" : resolvedDueDate,
+      dueLabel: resolvedDueDate === UNSCHEDULED_DUE_DATE ? "未安排" : resolvedDueDate,
       tags: splitTags(tags),
       ...(subtasks !== initialChecklists.subtasks ? { subtasks: reconcileSubtasks(task.subtasks, splitLines(subtasks)) } : {}),
       ...(acceptanceCriteria !== initialChecklists.acceptanceCriteria ? { acceptanceCriteria: reconcileAcceptanceCriteria(task.acceptanceCriteria, splitLines(acceptanceCriteria)) } : {}),

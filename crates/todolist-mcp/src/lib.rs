@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{Datelike, Local, NaiveDate};
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock},
@@ -17,6 +17,36 @@ use uuid::Uuid;
 const DEFAULT_TASK_PAGE_SIZE: u32 = 50;
 const MAX_TASK_PAGE_SIZE: u32 = 100;
 const MAX_REQUEST_ID_LENGTH: usize = 128;
+const UNSCHEDULED_DUE_DATE: &str = "9999-12-31";
+
+fn normalize_due_date(value: Option<&str>) -> Result<String, String> {
+    let Some(value) = value else {
+        return Ok(UNSCHEDULED_DUE_DATE.to_string());
+    };
+    let value = value.trim();
+    if value.is_empty() || value == UNSCHEDULED_DUE_DATE {
+        return Ok(UNSCHEDULED_DUE_DATE.to_string());
+    }
+    let parsed = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
+        "due_date must be a valid calendar date in YYYY-MM-DD format or empty to clear it"
+            .to_string()
+    })?;
+    if parsed.year() < 1 || parsed.format("%Y-%m-%d").to_string() != value {
+        return Err(
+            "due_date must be a valid calendar date in YYYY-MM-DD format or empty to clear it"
+                .to_string(),
+        );
+    }
+    Ok(value.to_string())
+}
+
+fn due_label(due_date: &str) -> String {
+    if due_date == UNSCHEDULED_DUE_DATE {
+        "未安排".to_string()
+    } else {
+        due_date.to_string()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TodoMcpServer {
@@ -107,7 +137,9 @@ pub struct CreateTaskInput {
     pub title: String,
     pub description: Option<String>,
     pub priority: Option<PriorityInput>,
-    #[schemars(description = "ISO date YYYY-MM-DD; omit for an unscheduled task")]
+    #[schemars(
+        description = "ISO date YYYY-MM-DD; omit or pass an empty string for an unscheduled task"
+    )]
     pub due_date: Option<String>,
     pub tags: Option<Vec<String>>,
     pub subtasks: Option<Vec<SubtaskInput>>,
@@ -126,7 +158,9 @@ pub struct UpdateTaskInput {
     pub description: Option<String>,
     pub status: Option<TaskStatusInput>,
     pub priority: Option<PriorityInput>,
-    #[schemars(description = "ISO date YYYY-MM-DD")]
+    #[schemars(
+        description = "ISO date YYYY-MM-DD; pass an empty string to clear it, or omit the field to preserve the current date"
+    )]
     pub due_date: Option<String>,
     pub tags: Option<Vec<String>>,
     #[schemars(description = "When present, replaces the subtask list")]
@@ -578,6 +612,10 @@ impl TodoMcpServer {
             Ok(request_id) => request_id,
             Err(error) => return Self::error(error),
         };
+        let due_date = match normalize_due_date(input.due_date.as_deref()) {
+            Ok(due_date) => due_date,
+            Err(error) => return Self::error(error),
+        };
         let task = Task {
             id: Uuid::new_v4().to_string(),
             project_id: input.project_id.clone(),
@@ -585,14 +623,8 @@ impl TodoMcpServer {
             description: input.description.clone().unwrap_or_default(),
             status: TaskStatus::Todo,
             priority: input.priority.unwrap_or(PriorityInput::Medium).into(),
-            due_label: input
-                .due_date
-                .clone()
-                .unwrap_or_else(|| "未安排".to_string()),
-            due_date: input
-                .due_date
-                .clone()
-                .unwrap_or_else(|| "9999-12-31".to_string()),
+            due_label: due_label(&due_date),
+            due_date,
             tags: input.tags.clone().unwrap_or_default(),
             source: "Codex 创建".to_string(),
             archived: false,
@@ -714,6 +746,11 @@ impl TodoMcpServer {
                     .map(TaskStatus::from)
                     .is_some_and(|status| status == TaskStatus::Done);
             let replacing_acceptance_criteria = input.acceptance_criteria.is_some();
+            let normalized_due_date = input
+                .due_date
+                .as_deref()
+                .map(|due_date| normalize_due_date(Some(due_date)))
+                .transpose()?;
 
             let mut changed = false;
             if let Some(title) = input.title {
@@ -736,8 +773,8 @@ impl TodoMcpServer {
                 task.priority = priority.into();
                 changed = true;
             }
-            if let Some(due_date) = input.due_date {
-                task.due_label = due_date.clone();
+            if let Some(due_date) = normalized_due_date {
+                task.due_label = due_label(&due_date);
                 task.due_date = due_date;
                 changed = true;
             }
@@ -803,7 +840,7 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.4",
+    version = "0.2.5",
     instructions = "TodoList is a local-first task app. Task details support separate attachments and images, added and managed through the desktop UI. get_task and list_tasks return file metadata, not file content; update_task and reorder_tasks preserve these fields. This MCP server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
@@ -1043,6 +1080,148 @@ mod tests {
         assert!(workspace.tasks[0].attachments.is_empty());
         assert!(workspace.tasks[0].images.is_empty());
         drop(server);
+        remove_database(&database_path);
+    }
+
+    #[test]
+    fn normalizes_unscheduled_mcp_dates_and_persists_them_across_restart() {
+        let (server, database_path) = test_server();
+        let create = |title: &str, due_date: Option<&str>| {
+            server.create_task(Parameters(CreateTaskInput {
+                request_id: None,
+                project_id: "project-1".to_string(),
+                title: title.to_string(),
+                description: None,
+                priority: None,
+                due_date: due_date.map(str::to_string),
+                tags: None,
+                subtasks: None,
+                acceptance_criteria: None,
+                dependencies: None,
+            }))
+        };
+
+        assert_eq!(create("Omitted date", None).is_error, Some(false));
+        assert_eq!(create("Blank date", Some("")).is_error, Some(false));
+        assert_eq!(
+            create("Scheduled date", Some(" 2026-09-08 ")).is_error,
+            Some(false)
+        );
+        let invalid_create = create("Invalid date", Some("2026-02-29"));
+        assert_eq!(invalid_create.is_error, Some(true));
+        assert!(invalid_create.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("valid calendar date"));
+
+        let workspace = server.store.load_workspace().unwrap().unwrap();
+        assert_eq!(workspace.tasks.len(), 3);
+        for title in ["Omitted date", "Blank date"] {
+            let task = workspace
+                .tasks
+                .iter()
+                .find(|task| task.title == title)
+                .unwrap();
+            assert_eq!(task.due_date, UNSCHEDULED_DUE_DATE);
+            assert_eq!(task.due_label, "未安排");
+        }
+        let scheduled = workspace
+            .tasks
+            .iter()
+            .find(|task| task.title == "Scheduled date")
+            .unwrap();
+        assert_eq!(scheduled.due_date, "2026-09-08");
+        assert_eq!(scheduled.due_label, "2026-09-08");
+
+        let preserve = server.update_task(Parameters(UpdateTaskInput {
+            task_id: scheduled.id.clone(),
+            expected_version: scheduled.version,
+            title: Some("Scheduled renamed".to_string()),
+            description: None,
+            status: None,
+            priority: None,
+            due_date: None,
+            tags: None,
+            subtasks: None,
+            acceptance_criteria: None,
+            dependencies: None,
+            allow_reopen_completed: None,
+        }));
+        assert_eq!(preserve.is_error, Some(false));
+        let preserved = server
+            .store
+            .load_workspace()
+            .unwrap()
+            .unwrap()
+            .tasks
+            .into_iter()
+            .find(|task| task.id == scheduled.id)
+            .unwrap();
+        assert_eq!(preserved.due_date, "2026-09-08");
+
+        let clear = server.update_task(Parameters(UpdateTaskInput {
+            task_id: preserved.id.clone(),
+            expected_version: preserved.version,
+            title: None,
+            description: None,
+            status: None,
+            priority: None,
+            due_date: Some(String::new()),
+            tags: None,
+            subtasks: None,
+            acceptance_criteria: None,
+            dependencies: None,
+            allow_reopen_completed: None,
+        }));
+        assert_eq!(clear.is_error, Some(false));
+        let cleared = server
+            .store
+            .load_workspace()
+            .unwrap()
+            .unwrap()
+            .tasks
+            .into_iter()
+            .find(|task| task.id == preserved.id)
+            .unwrap();
+        assert_eq!(cleared.due_date, UNSCHEDULED_DUE_DATE);
+        assert_eq!(cleared.due_label, "未安排");
+
+        let invalid_update = server.update_task(Parameters(UpdateTaskInput {
+            task_id: cleared.id.clone(),
+            expected_version: cleared.version,
+            title: Some("Invalid mutation".to_string()),
+            description: None,
+            status: None,
+            priority: None,
+            due_date: Some("2026-02-29".to_string()),
+            tags: None,
+            subtasks: None,
+            acceptance_criteria: None,
+            dependencies: None,
+            allow_reopen_completed: None,
+        }));
+        assert_eq!(invalid_update.is_error, Some(true));
+        assert!(invalid_update.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("valid calendar date"));
+
+        drop(server);
+        let reopened = TodoMcpServer::new(SqliteTaskStore::open(&database_path).unwrap());
+        let persisted = reopened.store.load_workspace().unwrap().unwrap();
+        let persisted_cleared = persisted
+            .tasks
+            .iter()
+            .find(|task| task.id == cleared.id)
+            .unwrap();
+        assert_eq!(persisted_cleared.due_date, UNSCHEDULED_DUE_DATE);
+        assert_eq!(persisted_cleared.due_label, "未安排");
+        assert_eq!(persisted_cleared.title, "Scheduled renamed");
+        assert_eq!(persisted_cleared.version, cleared.version);
+
+        drop(reopened);
         remove_database(&database_path);
     }
 
