@@ -840,7 +840,7 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.5",
+    version = "0.2.6",
     instructions = "TodoList is a local-first task app. Task details support separate attachments and images, added and managed through the desktop UI. get_task and list_tasks return file metadata, not file content; update_task and reorder_tasks preserve these fields. This MCP server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}

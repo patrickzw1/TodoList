@@ -105,6 +105,7 @@ test("CI and release workflows keep testing, signing and publication boundaries 
     assert.match(release, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const workflow of [ci, release]) {
+    assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1/);
     const sidecarPreparation = workflow.indexOf("run: npm run build:sidecar");
     const rustTests = workflow.indexOf("run: cargo test --workspace --locked --no-fail-fast");
     assert.ok(sidecarPreparation >= 0, "Workflow must prepare the real development MCP sidecar");
@@ -125,9 +126,13 @@ test("release scripts enforce the cloud signing and draft-release contract", asy
   assert.match(validate, /merge-base --is-ancestor/);
   assert.match(validate, /origin\/main/);
   assert.match(publish, /Get-RemoteTagCommit/);
+  assert.match(publish, /function Find-ReleaseByTag/);
+  assert.match(publish, /releases\?per_page=100&page=\$page/);
+  assert.match(publish, /function Get-ReleaseById/);
+  assert.doesNotMatch(publish, /releases\/tags\//);
   assert.match(publish, /Remote \$Tag moved after checkout/);
   assert.match(publish, /-draft=false/);
   assert.match(publish, /release', 'download'/);
-  assert.match(publish, /Get-FileHash/);
+  assert.match(publish, /Get-Sha256/);
   assert.doesNotMatch(publish, /release', 'delete'/);
 });

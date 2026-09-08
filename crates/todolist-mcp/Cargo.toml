@@ -1,6 +1,6 @@
 [package]
 name = "todolist-mcp"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "Local stdio MCP server for TodoList"
 
