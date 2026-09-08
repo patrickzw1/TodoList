@@ -105,6 +105,10 @@ test("CI and release workflows keep testing, signing and publication boundaries 
     assert.match(release, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const workflow of [ci, release]) {
+    const sidecarPreparation = workflow.indexOf("run: npm run build:sidecar");
+    const rustTests = workflow.indexOf("run: cargo test --workspace --locked --no-fail-fast");
+    assert.ok(sidecarPreparation >= 0, "Workflow must prepare the real development MCP sidecar");
+    assert.ok(sidecarPreparation < rustTests, "Development MCP sidecar must exist before desktop Rust tests");
     for (const match of workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/g)) {
       assert.match(match[1], /^[0-9a-f]{40}$/, `Action is not pinned to a full commit: ${match[0]}`);
     }

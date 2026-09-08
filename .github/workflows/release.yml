@@ -75,6 +75,9 @@ jobs:
       - name: Test Sites worker contract
         run: npm run test:sites
 
+      - name: Prepare development MCP sidecar for desktop tests
+        run: npm run build:sidecar
+
       - name: Run Rust workspace tests
         run: cargo test --workspace --locked --no-fail-fast
 
