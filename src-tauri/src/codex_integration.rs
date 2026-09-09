@@ -12,7 +12,7 @@ use toml_edit::{value, Array, DocumentMut, Item, Table};
 const SKILL_CONTENT: &str = include_str!("../../.agents/skills/todolist-mcp/SKILL.md");
 const MANAGED_MARKER: &str = "app.todolist.desktop\n";
 const MANAGED_COMMAND_FILE: &str = ".todolist-command";
-const LEGACY_MCP_TOOLS: [&str; 6] = [
+const LEGACY_MCP_TOOLS_V1: [&str; 6] = [
     "list_projects",
     "create_project",
     "list_tasks",
@@ -20,11 +20,21 @@ const LEGACY_MCP_TOOLS: [&str; 6] = [
     "create_task",
     "update_task",
 ];
-const MCP_TOOLS: [&str; 7] = [
+const LEGACY_MCP_TOOLS_V2: [&str; 7] = [
     "list_projects",
     "create_project",
     "list_tasks",
     "get_task",
+    "create_task",
+    "update_task",
+    "reorder_tasks",
+];
+const MCP_TOOLS: [&str; 8] = [
+    "list_projects",
+    "create_project",
+    "list_tasks",
+    "get_task",
+    "get_task_activity",
     "create_task",
     "update_task",
     "reorder_tasks",
@@ -50,7 +60,7 @@ struct SkillState {
 enum ConfigChange {
     None,
     Created,
-    AddedReorderTool,
+    AddedManagedTools(Vec<String>),
     MigratedCommand,
 }
 
@@ -183,7 +193,27 @@ fn configured_tools_current(document: &DocumentMut) -> bool {
 }
 
 fn configured_tools_legacy(document: &DocumentMut) -> bool {
-    configured_tools_match(document, &LEGACY_MCP_TOOLS)
+    configured_tools_match(document, &LEGACY_MCP_TOOLS_V1)
+        || configured_tools_match(document, &LEGACY_MCP_TOOLS_V2)
+}
+
+fn missing_managed_tools(document: &DocumentMut) -> Vec<&'static str> {
+    let Some(configured) = configured_tools_item(document).and_then(Item::as_array) else {
+        return Vec::new();
+    };
+    MCP_TOOLS
+        .iter()
+        .copied()
+        .filter(|expected| {
+            !configured
+                .iter()
+                .any(|configured| configured.as_str() == Some(expected))
+        })
+        .collect()
+}
+
+fn tool_update_label(tools: &[&str]) -> String {
+    format!("工具列表（新增 {}）", tools.join("、"))
 }
 
 fn enabled_tools_value() -> toml_edit::Value {
@@ -286,6 +316,11 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
         && skill.skill_file_exists
         && !skill.current
         && configured_tools_legacy(&document);
+    let missing_tools = if managed_legacy_tools {
+        missing_managed_tools(&document)
+    } else {
+        Vec::new()
+    };
     let skill_update_available =
         command_matches && skill.managed && skill.skill_file_exists && !skill.current;
 
@@ -341,7 +376,7 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
             updates.push("新版使用说明".to_string());
         }
         if managed_legacy_tools {
-            updates.push("工具列表（新增 reorder_tasks）".to_string());
+            updates.push(tool_update_label(&missing_tools));
         }
         let message = if managed_legacy_tools {
             "安装路径未变，需要同步新版使用说明和工具列表。"
@@ -474,13 +509,18 @@ fn install_config(
             if !update_managed_legacy_tools || !configured_tools_legacy(&document) {
                 return Ok(ConfigChange::None);
             }
-            document["mcp_servers"]["todolist"]["enabled_tools"]
+            let added_tools = missing_managed_tools(&document);
+            let enabled_tools = document["mcp_servers"]["todolist"]["enabled_tools"]
                 .as_array_mut()
-                .ok_or_else(|| "TodoList enabled_tools setting is not an array".to_string())?
-                .push("reorder_tasks");
+                .ok_or_else(|| "TodoList enabled_tools setting is not an array".to_string())?;
+            for tool in &added_tools {
+                enabled_tools.push(*tool);
+            }
             backup_file(&paths.codex_config)?;
             atomic_write(&paths.codex_config, &document.to_string())?;
-            return Ok(ConfigChange::AddedReorderTool);
+            return Ok(ConfigChange::AddedManagedTools(
+                added_tools.into_iter().map(str::to_string).collect(),
+            ));
         }
         let skill = skill_state(paths)?;
         if !is_managed_previous_command(paths, &skill, &command) {
@@ -634,7 +674,7 @@ fn configure(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String>
         let update_managed_legacy_tools = before
             .pending_updates
             .iter()
-            .any(|item| item.contains("reorder_tasks"));
+            .any(|item| item.starts_with("工具列表"));
         let config_change = install_config(paths, update_managed_legacy_tools)
             .map_err(|error| format!("写入 Codex MCP 配置失败：{error}"))?;
         install_skill(paths).map_err(|error| format!("写入 TodoList Skill 失败：{error}"))?;
@@ -646,8 +686,9 @@ fn configure(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String>
         }
         match config_change {
             ConfigChange::Created => updated_items.push("MCP 注册".to_string()),
-            ConfigChange::AddedReorderTool => {
-                updated_items.push("工具列表（新增 reorder_tasks）".to_string())
+            ConfigChange::AddedManagedTools(tools) => {
+                let tools = tools.iter().map(String::as_str).collect::<Vec<_>>();
+                updated_items.push(tool_update_label(&tools))
             }
             ConfigChange::MigratedCommand => {
                 return Err("TodoList MCP path changed while configuring the integration".into())
@@ -744,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn refreshes_an_owned_six_tool_config_without_replacing_other_settings() {
+    fn refreshes_an_owned_six_tool_config_to_all_current_tools_without_replacing_other_settings() {
         let root = tempfile::tempdir().unwrap();
         let paths = test_paths(root.path());
         fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
@@ -775,17 +816,63 @@ mod tests {
         assert_eq!(updated.action_result, "updated");
         assert_eq!(
             updated.updated_items,
-            vec!["新版使用说明", "工具列表（新增 reorder_tasks）"]
+            vec![
+                "新版使用说明",
+                "工具列表（新增 get_task_activity、reorder_tasks）"
+            ]
         );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
         assert!(configured.contains("theme = \"dark\""));
         assert!(configured.contains("[mcp_servers.existing]"));
         assert!(configured.contains("custom_setting = \"keep\""));
         assert!(configured.contains("\"reorder_tasks\""));
+        assert!(configured.contains("\"get_task_activity\""));
         assert!(configured_tools_current(
             &configured.parse::<DocumentMut>().unwrap()
         ));
         assert!(inspect(&paths).unwrap().configured);
+    }
+
+    #[test]
+    fn refreshes_an_owned_seven_tool_config_with_only_task_activity() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        install_skill(&paths).unwrap();
+        fs::write(
+            paths.skill_directory.join("SKILL.md"),
+            "old managed version",
+        )
+        .unwrap();
+        write_managed_command(&paths).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\ncustom_setting = \"keep\"\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+
+        let outdated = inspect(&paths).unwrap();
+        assert_eq!(outdated.state, "update_available");
+        assert_eq!(
+            outdated.pending_updates,
+            vec!["新版使用说明", "工具列表（新增 get_task_activity）"]
+        );
+
+        let updated = configure(&paths).unwrap();
+        assert_eq!(updated.action_result, "updated");
+        assert_eq!(
+            updated.updated_items,
+            vec!["新版使用说明", "工具列表（新增 get_task_activity）"]
+        );
+        let configured = fs::read_to_string(&paths.codex_config).unwrap();
+        assert!(configured.contains("custom_setting = \"keep\""));
+        assert_eq!(configured.matches("get_task_activity").count(), 1);
+        assert!(configured_tools_current(
+            &configured.parse::<DocumentMut>().unwrap()
+        ));
     }
 
     #[test]
@@ -798,7 +885,7 @@ mod tests {
         fs::write(
             &paths.codex_config,
             format!(
-                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\n",
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"get_task_activity\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\n",
                 display_path(&paths.mcp_executable)
             ),
         )
@@ -837,6 +924,7 @@ mod tests {
         let after = fs::read_to_string(&paths.codex_config).unwrap();
         assert_eq!(after, before);
         assert!(!after.contains("reorder_tasks"));
+        assert!(!after.contains("get_task_activity"));
     }
 
     #[test]
@@ -1037,6 +1125,10 @@ mod tests {
         assert_eq!(
             before_config.matches("reorder_tasks").count(),
             after_config.matches("reorder_tasks").count()
+        );
+        assert_eq!(
+            before_config.matches("get_task_activity").count(),
+            after_config.matches("get_task_activity").count()
         );
         assert!(inspect(&new_paths).unwrap().configured);
         let expected_command = display_path(&new_paths.mcp_executable);

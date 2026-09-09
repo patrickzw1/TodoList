@@ -12,12 +12,13 @@ The `todolist` server is for daily tasks in the installed app. The TodoList sour
 ## Workflow
 
 1. Call `list_projects` when the target project id is unknown. If multiple projects are plausible, ask the user which one to use. Use `create_project` only when the user asked for a new project or clearly approved creating one.
-2. Call `list_tasks` or `get_task` before changing an existing task. Follow `nextCursor` until it is null when the full filtered result matters.
-3. Use `create_task` for new work. Keep titles concise and put detail in description, subtasks, dependencies, and acceptance criteria.
-4. For `create_project` and `create_task`, generate one stable, unique `request_id` for the logical operation and reuse that exact value only when retrying the same input. If the input changes, use a new value.
-5. Use `update_task` with the latest returned task `version` as `expected_version`.
-6. For `reorder_tasks`, read every page for exactly one project and archived state, preserve every stable task id exactly once, and pass the latest `workspaceVersion` as `expected_workspace_version`. For archived ordering, call `list_tasks` with `include_archived=true`, read all pages, then keep only results whose `archived` field is `true`; there is no archived-only server filter. Re-read the complete group after a workspace conflict; never infer omitted ids.
-7. Read the changed task or ordered group again when the result matters to the conversation.
+2. Call `list_tasks` or `get_task` before changing an existing task. Their task objects intentionally omit `activity`; follow `nextCursor` until it is null when the full filtered result matters.
+3. Do not call `get_task_activity` during normal task reads. Use it only when the user asks to trace a task's history, request only the needed number of newest entries (default 10, maximum 50), and follow `nextCursor` only as far as the request requires.
+4. Use `create_task` for new work. Keep titles concise and put detail in description, subtasks, dependencies, and acceptance criteria.
+5. For `create_project` and `create_task`, generate one stable, unique `request_id` for the logical operation and reuse that exact value only when retrying the same input. If the input changes, use a new value.
+6. Use `update_task` with the latest returned task `version` as `expected_version`.
+7. For `reorder_tasks`, read every page for exactly one project and archived state, preserve every stable task id exactly once, and pass the latest `workspaceVersion` as `expected_workspace_version`. For archived ordering, call `list_tasks` with `include_archived=true`, read all pages, then keep only results whose `archived` field is `true`; there is no archived-only server filter. Re-read the complete group after a workspace conflict; never infer omitted ids.
+8. Read the changed task or ordered group again when the result matters to the conversation.
 
 Acceptance criteria may be supplied as short strings when creating a task. When replacing criteria on an existing task, reuse the latest criterion `id`, `title`, and `completed` values for unchanged items so user confirmations are preserved. `list_tasks` excludes archived tasks unless `include_archived` is true, returns at most 50 tasks by default, and accepts a maximum `limit` of 100.
 
@@ -33,6 +34,7 @@ The user adds, removes, opens, and previews files in the desktop task-detail pan
 
 - On `version_conflict`, read the task again.
 - On `workspace_version_conflict` or a stale pagination cursor, restart `list_tasks` without a cursor and read every page of the ordered group again.
+- A `get_task_activity` cursor is bound to one task and its current task version. If it is stale or belongs to another task, restart that history read without the cursor; never reuse it across tasks or versions.
 - Preserve newer user edits. Merge fields that do not conflict.
 - If both the user and Codex changed the same field, keep the user's value and skip that field unless the user explicitly asked to replace it.
 - Never reopen a completed task unless the user explicitly asked. Only then set `allow_reopen_completed` to true.

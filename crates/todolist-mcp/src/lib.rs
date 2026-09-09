@@ -16,6 +16,8 @@ use uuid::Uuid;
 
 const DEFAULT_TASK_PAGE_SIZE: u32 = 50;
 const MAX_TASK_PAGE_SIZE: u32 = 100;
+const DEFAULT_ACTIVITY_PAGE_SIZE: u32 = 10;
+const MAX_ACTIVITY_PAGE_SIZE: u32 = 50;
 const MAX_REQUEST_ID_LENGTH: usize = 128;
 const UNSCHEDULED_DUE_DATE: &str = "9999-12-31";
 
@@ -60,7 +62,7 @@ impl TodoMcpServer {
 
     fn success(value: serde_json::Value) -> CallToolResult {
         CallToolResult::success(vec![ContentBlock::text(
-            serde_json::to_string_pretty(&value).expect("serialize tool result"),
+            serde_json::to_string(&value).expect("serialize tool result"),
         )])
     }
 
@@ -92,6 +94,19 @@ pub struct GetTaskInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetTaskActivityInput {
+    #[schemars(description = "Task id whose retained activity history should be read")]
+    pub task_id: String,
+    #[schemars(
+        description = "Maximum activity entries to return; defaults to 10 and cannot exceed 50",
+        range(min = 1, max = 50)
+    )]
+    pub limit: Option<u32>,
+    #[schemars(description = "Opaque nextCursor returned by the previous get_task_activity call")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReorderTasksInput {
     #[schemars(description = "Project containing every supplied task")]
     pub project_id: String,
@@ -111,6 +126,14 @@ struct ListTasksCursor {
     workspace_version: u64,
     filter_fingerprint: String,
     last_task_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskActivityCursor {
+    task_id: String,
+    task_version: u64,
+    last_activity_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -291,6 +314,16 @@ fn request_fingerprint(value: &impl Serialize) -> String {
     format!("{:x}", Sha256::digest(payload))
 }
 
+fn task_output(task: &Task) -> serde_json::Value {
+    let mut value = serde_json::to_value(task).expect("serialize task output");
+    value
+        .as_object_mut()
+        .expect("task serializes as an object")
+        .remove("activity")
+        .expect("stored task includes activity");
+    value
+}
+
 #[tool_router]
 impl TodoMcpServer {
     #[tool(
@@ -412,7 +445,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and separate attachments/images metadata. File content is not returned; users add files in desktop task details.",
+        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and separate attachments/images metadata, but omits activity history to keep normal reads compact. Use get_task_activity only when the user asks for task history. File content is not returned; users add files in desktop task details.",
         annotations(
             title = "List TodoList tasks",
             read_only_hint = true,
@@ -497,9 +530,10 @@ impl TodoMcpServer {
                     None
                 };
                 let page = tasks
-                    .into_iter()
+                    .iter()
                     .skip(start)
                     .take(limit as usize)
+                    .map(task_output)
                     .collect::<Vec<_>>();
                 Self::success(json!({
                     "workspaceVersion": workspace.version,
@@ -563,7 +597,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata (originalName, mediaType, size, storageKey, addedAt). File content is not returned. Add, remove, and preview files through desktop task details; MCP has no file upload tool.",
+        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata (originalName, mediaType, size, storageKey, addedAt). Activity history is omitted to keep normal reads compact; use get_task_activity only when the user asks for history. File content is not returned. Add, remove, and preview files through desktop task details; MCP has no file upload tool.",
         annotations(
             title = "Get TodoList task",
             read_only_hint = true,
@@ -581,7 +615,7 @@ impl TodoMcpServer {
             {
                 Some(task) => Self::success(json!({
                     "workspaceVersion": workspace.version,
-                    "task": task,
+                    "task": task_output(&task),
                 })),
                 None => Self::error(format!("Task '{}' was not found", input.task_id)),
             },
@@ -593,7 +627,95 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Create an unpinned TodoList task in an existing project. Pass a stable request_id so a transport retry returns the original task instead of creating a duplicate. This never opens the desktop note.",
+        description = "Read retained activity history for one TodoList task only when the user asks to trace it. Returns newest entries first with a version-bound opaque cursor; if the task changes, restart without the stale cursor. Defaults to 10 entries and accepts 1 through 50.",
+        annotations(
+            title = "Get TodoList task activity",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    fn get_task_activity(
+        &self,
+        Parameters(input): Parameters<GetTaskActivityInput>,
+    ) -> CallToolResult {
+        let limit = input.limit.unwrap_or(DEFAULT_ACTIVITY_PAGE_SIZE);
+        if !(1..=MAX_ACTIVITY_PAGE_SIZE).contains(&limit) {
+            return Self::error(format!(
+                "limit must be between 1 and {MAX_ACTIVITY_PAGE_SIZE}"
+            ));
+        }
+
+        match self.store.load_workspace() {
+            Ok(Some(workspace)) => {
+                let Some(task) = workspace.tasks.iter().find(|task| task.id == input.task_id)
+                else {
+                    return Self::error(format!("Task '{}' was not found", input.task_id));
+                };
+                let activity = task.activity.iter().rev().collect::<Vec<_>>();
+                let total_count = activity.len();
+                let start = match input.cursor.as_deref() {
+                    Some(cursor) => {
+                        let cursor: TaskActivityCursor =
+                            match serde_json::from_str(cursor) {
+                                Ok(cursor) => cursor,
+                                Err(_) => return Self::error(
+                                    "cursor is invalid; restart get_task_activity without a cursor",
+                                ),
+                            };
+                        if cursor.task_id != task.id || cursor.task_version != task.version {
+                            return Self::error("cursor is stale or belongs to a different task; restart get_task_activity without a cursor");
+                        }
+                        match activity
+                            .iter()
+                            .position(|item| item.id == cursor.last_activity_id)
+                        {
+                            Some(index) => index + 1,
+                            None => {
+                                return Self::error("cursor is invalid for the current task activity; restart get_task_activity without a cursor")
+                            }
+                        }
+                    }
+                    None => 0,
+                };
+                let end = (start + limit as usize).min(total_count);
+                let next_cursor = if end < total_count {
+                    Some(
+                        serde_json::to_string(&TaskActivityCursor {
+                            task_id: task.id.clone(),
+                            task_version: task.version,
+                            last_activity_id: activity[end - 1].id.clone(),
+                        })
+                        .expect("serialize task activity cursor"),
+                    )
+                } else {
+                    None
+                };
+                let page = activity
+                    .into_iter()
+                    .skip(start)
+                    .take(limit as usize)
+                    .collect::<Vec<_>>();
+                Self::success(json!({
+                    "taskId": task.id,
+                    "taskVersion": task.version,
+                    "count": page.len(),
+                    "totalCount": total_count,
+                    "limit": limit,
+                    "nextCursor": next_cursor,
+                    "activity": page,
+                }))
+            }
+            Ok(None) => Self::error(
+                "TodoList workspace is not initialized; open the desktop app once before using MCP",
+            ),
+            Err(error) => Self::error(format!("Could not read TodoList task activity: {error}")),
+        }
+    }
+
+    #[tool(
+        description = "Create an unpinned TodoList task in an existing project. Pass a stable request_id so a transport retry returns the original task instead of creating a duplicate. The returned task omits activity history; use get_task_activity only when the user asks for history. This never opens the desktop note.",
         annotations(
             title = "Create TodoList task",
             read_only_hint = false,
@@ -692,7 +814,7 @@ impl TodoMcpServer {
                 Self::success(json!({
                     "workspaceVersion": result.workspace.version,
                     "replayed": result.replayed,
-                    "task": task,
+                    "task": task_output(task),
                 }))
             }
             Err(error) => Self::error(format!("Could not create TodoList task: {error}")),
@@ -700,7 +822,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. Existing attachments and images are preserved automatically; this tool cannot add, remove, or replace files.",
+        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. The returned task omits activity history; use get_task_activity only when the user asks for history. Existing attachments and images are preserved automatically; this tool cannot add, remove, or replace files.",
         annotations(
             title = "Update TodoList task",
             read_only_hint = false,
@@ -725,7 +847,7 @@ impl TodoMcpServer {
                     "message": "The task changed after it was read. Read it again and preserve newer user edits.",
                     "expectedVersion": expected_version,
                     "currentVersion": task.version,
-                    "currentTask": task,
+                    "currentTask": task_output(task),
                 }))
                 .expect("serialize version conflict"));
             }
@@ -830,7 +952,7 @@ impl TodoMcpServer {
                     .expect("updated task remains in workspace");
                 Self::success(json!({
                     "workspaceVersion": workspace.version,
-                    "task": task,
+                    "task": task_output(task),
                 }))
             }
             Err(error) => Self::error(format!("Could not update TodoList task: {error}")),
@@ -840,8 +962,8 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.6",
-    instructions = "TodoList is a local-first task app. Task details support separate attachments and images, added and managed through the desktop UI. get_task and list_tasks return file metadata, not file content; update_task and reorder_tasks preserve these fields. This MCP server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
+    version = "0.2.7",
+    instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, and update_task omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments, and images metadata. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. Attachments and images are added and managed through the desktop UI. File content is not returned; update_task and reorder_tasks preserve file metadata, and this server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
 
@@ -902,6 +1024,350 @@ mod tests {
             }))
             .unwrap(),
         ))
+    }
+
+    fn seed_task_activity(server: &TodoMcpServer, task_id: &str, count: usize) -> Task {
+        let workspace = server
+            .store
+            .mutate_workspace(|mut workspace| {
+                workspace.version += 1;
+                let task = workspace
+                    .tasks
+                    .iter_mut()
+                    .find(|task| task.id == task_id)
+                    .expect("seeded task exists");
+                task.version += 1;
+                task.activity = (0..count)
+                    .map(|index| ActivityItem {
+                        id: format!("activity-{index:03}"),
+                        action: format!("Synthetic activity {index:03}"),
+                        actor: "test".to_string(),
+                        at: format!("2026-09-09 00:{index:03}"),
+                    })
+                    .collect();
+                task.trim_activity();
+                Ok(workspace)
+            })
+            .expect("seed task activity");
+        workspace
+            .tasks
+            .into_iter()
+            .find(|task| task.id == task_id)
+            .expect("seeded task remains")
+    }
+
+    #[test]
+    fn publishes_task_activity_tool_and_bounded_schema() {
+        let tools = TodoMcpServer::tool_router().list_all();
+        assert_eq!(tools.len(), 8);
+        let history = tools
+            .iter()
+            .find(|tool| tool.name == "get_task_activity")
+            .expect("history tool is discoverable");
+        assert!(history
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("only when the user asks"));
+        assert_eq!(
+            history.annotations.as_ref().unwrap().read_only_hint,
+            Some(true)
+        );
+        let schema = serde_json::to_value(history.input_schema.as_ref()).unwrap();
+        let schema_text = serde_json::to_string(&schema).unwrap();
+        for property in ["task_id", "limit", "cursor"] {
+            assert!(schema["properties"].get(property).is_some());
+        }
+        assert!(schema_text.contains("\"minimum\":1"));
+        assert!(schema_text.contains("\"maximum\":50"));
+    }
+
+    #[test]
+    fn ordinary_task_results_omit_activity_while_storage_keeps_it() {
+        let (server, database_path) = test_server();
+        let input = || CreateTaskInput {
+            request_id: Some("compact-task-output".to_string()),
+            project_id: "project-1".to_string(),
+            title: "Compact output".to_string(),
+            description: Some("Keep every ordinary task field".to_string()),
+            priority: Some(PriorityInput::High),
+            due_date: None,
+            tags: Some(vec!["mcp".to_string()]),
+            subtasks: Some(vec![SubtaskInput {
+                id: Some("subtask-1".to_string()),
+                title: "Keep this id".to_string(),
+                completed: Some(false),
+            }]),
+            acceptance_criteria: Some(vec![AcceptanceCriterionInput::Detailed(
+                AcceptanceCriterionFields {
+                    id: Some("criterion-1".to_string()),
+                    title: "Keep this criterion".to_string(),
+                    completed: Some(true),
+                },
+            )]),
+            dependencies: Some(vec!["dependency".to_string()]),
+        };
+
+        let first_result = server.create_task(Parameters(input()));
+        let first_text = first_result.content[0].as_text().unwrap().text.clone();
+        assert!(!first_text.contains('\n'));
+        let first = result_json(first_result);
+        let replay = result_json(server.create_task(Parameters(input())));
+        assert!(first["task"].get("activity").is_none());
+        assert!(replay["task"].get("activity").is_none());
+        assert_eq!(first["task"], replay["task"]);
+        let task_id = first["task"]["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            server.store.load_workspace().unwrap().unwrap().tasks[0]
+                .activity
+                .len(),
+            1
+        );
+
+        let task = seed_task_activity(&server, &task_id, 100);
+        let full_value = serde_json::to_value(&task).unwrap();
+        let mut expected_projection = full_value.clone();
+        expected_projection
+            .as_object_mut()
+            .unwrap()
+            .remove("activity");
+        let projection = task_output(&task);
+        assert_eq!(projection, expected_projection);
+        let full_bytes = serde_json::to_vec(&full_value).unwrap().len();
+        let projected_bytes = serde_json::to_vec(&projection).unwrap().len();
+        println!(
+            "synthetic task JSON bytes: with_activity={full_bytes}, without_activity={projected_bytes}, removed={}",
+            full_bytes - projected_bytes
+        );
+        assert!(projected_bytes < full_bytes);
+        assert_eq!(projection["subtasks"][0]["id"], "subtask-1");
+        assert_eq!(projection["acceptanceCriteria"][0]["id"], "criterion-1");
+        assert_eq!(projection["dependencies"][0], "dependency");
+
+        let get = result_json(server.get_task(Parameters(GetTaskInput {
+            task_id: task_id.clone(),
+        })));
+        let list = result_json(server.list_tasks(Parameters(ListTasksInput {
+            project_id: Some("project-1".to_string()),
+            status: None,
+            include_done: None,
+            include_archived: None,
+            limit: None,
+            cursor: None,
+        })));
+        assert!(get["task"].get("activity").is_none());
+        assert!(list["tasks"][0].get("activity").is_none());
+
+        let update = result_json(update_title(&server, &task, "Compact output updated"));
+        assert!(update["task"].get("activity").is_none());
+        let persisted = server.store.load_workspace().unwrap().unwrap().tasks[0].clone();
+        assert_eq!(persisted.activity.len(), 100);
+        assert_eq!(persisted.activity.last().unwrap().action, "Codex 更新任务");
+
+        let stale = update_title(&server, &task, "Stale overwrite");
+        let stale_text = &stale.content[0].as_text().unwrap().text;
+        assert_eq!(stale.is_error, Some(true));
+        assert!(stale_text.contains("\"currentTask\""));
+        assert!(!stale_text.contains("\"activity\":"));
+
+        drop(server);
+        remove_database(&database_path);
+    }
+
+    #[test]
+    fn task_activity_defaults_to_ten_and_paginates_newest_first() {
+        let (server, database_path) = test_server();
+        let workspace = backup_test_task(&server);
+        let task = seed_task_activity(&server, &workspace.tasks[0].id, 23);
+
+        let first = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id.clone(),
+            limit: None,
+            cursor: None,
+        })));
+        assert_eq!(first["taskId"], task.id);
+        assert_eq!(first["taskVersion"], task.version);
+        assert_eq!(first["limit"], 10);
+        assert_eq!(first["count"], 10);
+        assert_eq!(first["totalCount"], 23);
+        assert_eq!(first["activity"][0]["id"], "activity-022");
+        assert_eq!(first["activity"][9]["id"], "activity-013");
+
+        let second = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id.clone(),
+            limit: Some(10),
+            cursor: first["nextCursor"].as_str().map(str::to_string),
+        })));
+        assert_eq!(second["activity"][0]["id"], "activity-012");
+        assert_eq!(second["activity"][9]["id"], "activity-003");
+
+        let third = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id,
+            limit: Some(10),
+            cursor: second["nextCursor"].as_str().map(str::to_string),
+        })));
+        assert_eq!(third["count"], 3);
+        assert_eq!(third["activity"][0]["id"], "activity-002");
+        assert_eq!(third["activity"][2]["id"], "activity-000");
+        assert!(third["nextCursor"].is_null());
+
+        drop(server);
+        remove_database(&database_path);
+    }
+
+    #[test]
+    fn task_activity_validates_boundaries_empty_tasks_and_cursor_scope() {
+        let (server, database_path) = test_server();
+        let first_workspace = backup_test_task(&server);
+        let first_task = seed_task_activity(&server, &first_workspace.tasks[0].id, 2);
+        let second_create = result_json(server.create_task(Parameters(CreateTaskInput {
+            request_id: None,
+            project_id: "project-1".to_string(),
+            title: "Empty history".to_string(),
+            description: None,
+            priority: None,
+            due_date: None,
+            tags: None,
+            subtasks: None,
+            acceptance_criteria: None,
+            dependencies: None,
+        })));
+        let second_id = second_create["task"]["id"].as_str().unwrap().to_string();
+        let second_task = seed_task_activity(&server, &second_id, 0);
+
+        for limit in [0, 51] {
+            let invalid = server.get_task_activity(Parameters(GetTaskActivityInput {
+                task_id: first_task.id.clone(),
+                limit: Some(limit),
+                cursor: None,
+            }));
+            assert_eq!(invalid.is_error, Some(true));
+            assert!(invalid.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("between 1 and 50"));
+        }
+        for limit in [1, 50] {
+            assert_eq!(
+                server
+                    .get_task_activity(Parameters(GetTaskActivityInput {
+                        task_id: first_task.id.clone(),
+                        limit: Some(limit),
+                        cursor: None,
+                    }))
+                    .is_error,
+                Some(false)
+            );
+        }
+
+        let empty = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: second_task.id.clone(),
+            limit: None,
+            cursor: None,
+        })));
+        assert_eq!(empty["count"], 0);
+        assert_eq!(empty["totalCount"], 0);
+        assert_eq!(empty["activity"], json!([]));
+        assert!(empty["nextCursor"].is_null());
+
+        let first_page = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: first_task.id.clone(),
+            limit: Some(1),
+            cursor: None,
+        })));
+        let cross_task = server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: second_task.id,
+            limit: Some(1),
+            cursor: first_page["nextCursor"].as_str().map(str::to_string),
+        }));
+        assert_eq!(cross_task.is_error, Some(true));
+        assert!(cross_task.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("different task"));
+
+        let missing = server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: "missing-task".to_string(),
+            limit: None,
+            cursor: None,
+        }));
+        assert_eq!(missing.is_error, Some(true));
+        assert!(missing.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("was not found"));
+        let malformed = server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: first_task.id,
+            limit: None,
+            cursor: Some("not-a-returned-cursor".to_string()),
+        }));
+        assert_eq!(malformed.is_error, Some(true));
+        assert!(malformed.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("cursor is invalid"));
+
+        drop(server);
+        remove_database(&database_path);
+    }
+
+    #[test]
+    fn task_activity_cursor_expires_after_update_and_history_truncation() {
+        let (server, database_path) = test_server();
+        let workspace = backup_test_task(&server);
+        let task = seed_task_activity(&server, &workspace.tasks[0].id, 100);
+        let first = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id.clone(),
+            limit: Some(50),
+            cursor: None,
+        })));
+        let stale_cursor = first["nextCursor"].as_str().unwrap().to_string();
+
+        assert_eq!(
+            update_title(&server, &task, "Updated across history page").is_error,
+            Some(false)
+        );
+        let stale = server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id.clone(),
+            limit: Some(50),
+            cursor: Some(stale_cursor),
+        }));
+        assert_eq!(stale.is_error, Some(true));
+        assert!(stale.content[0].as_text().unwrap().text.contains("stale"));
+
+        let restarted = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id.clone(),
+            limit: Some(50),
+            cursor: None,
+        })));
+        let final_page = result_json(server.get_task_activity(Parameters(GetTaskActivityInput {
+            task_id: task.id,
+            limit: Some(50),
+            cursor: restarted["nextCursor"].as_str().map(str::to_string),
+        })));
+        let ids = restarted["activity"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(final_page["activity"].as_array().unwrap())
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        let unique = ids
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), 100);
+        assert_eq!(unique.len(), 100);
+        assert!(!ids.contains(&"activity-000"));
+        assert!(ids.contains(&"activity-099"));
+        assert!(final_page["nextCursor"].is_null());
+
+        drop(server);
+        remove_database(&database_path);
     }
 
     #[test]

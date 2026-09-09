@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, test } from "node:test";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { openMainWindow, openStickyWindow } from "../src/window-actions.ts";
@@ -75,4 +76,17 @@ test("web sticky mode opens a named note without minimizing or closing the brows
 test("web sticky popup blocking is reported to the main UI", async () => {
   window.open = () => null;
   await assert.rejects(openStickyWindow, /浏览器阻止/);
+});
+
+test("sticky layout fills a resized viewport without changing its native window contract", async () => {
+  const [styles, nativeWindowActions] = await Promise.all([
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/window_actions.rs", import.meta.url), "utf8"),
+  ]);
+  assert.match(styles, /html:has\(\.sticky-window\)[^{}]*body:has\(\.sticky-window\) #root[^{}]*\{[^}]*width: 100%;[^}]*height: 100%/);
+  assert.match(styles, /\.sticky-window \{[^}]*width: 100%;[^}]*height: 100%;[^}]*min-width: 0;[^}]*min-height: 0;/);
+  assert.doesNotMatch(styles, /\.sticky-window \{[^}]*width: min\(100vw, 360px\)/);
+  assert.match(styles, /\.sticky-body \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*overflow: auto;/);
+  assert.match(nativeWindowActions, /\.min_inner_size\(320\.0, 220\.0\)/);
+  assert.match(nativeWindowActions, /\.resizable\(true\)/);
 });

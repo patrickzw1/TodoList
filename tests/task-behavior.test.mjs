@@ -6,6 +6,7 @@ import { resolveDefaultProjectId } from "../src/task-creation.ts";
 import { searchTasks, tasksForView } from "../src/task-filtering.ts";
 import { reconcileAcceptanceCriteria, reconcileSubtasks } from "../src/task-checklists.ts";
 import { isDueDateOnOrBefore, normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "../src/date-utils.ts";
+import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "../src/project-colors.ts";
 
 function makeTask(activity = []) {
   return {
@@ -14,6 +15,17 @@ function makeTask(activity = []) {
     version: 1, subtasks: [], acceptanceCriteria: [], dependencies: [], activity,
   };
 }
+
+test("project colors keep presets, include named bright red, and normalize supported custom HEX values", () => {
+  assert.equal(PROJECT_COLORS.length, 7);
+  assert.deepEqual(PROJECT_COLOR_PRESETS.at(-1), { value: "#ff0000", label: "大红色" });
+  assert.equal(isPresetProjectColor("#ff0000"), true);
+  assert.equal(normalizeProjectColor(" #AbC "), "#aabbcc");
+  assert.equal(normalizeProjectColor("#12A4f0"), "#12a4f0");
+  for (const invalid of ["abc", "#12", "#1234", "#12345g", "red", ""]) assert.equal(normalizeProjectColor(invalid), null);
+  assert.equal(isPresetProjectColor(PROJECT_COLORS[0]), true);
+  assert.equal(isPresetProjectColor("#aabbcc"), false);
+});
 
 for (const reconcile of [reconcileAcceptanceCriteria, reconcileSubtasks]) {
   test(`${reconcile.name} preserves identity through insertion, deletion and reordering`, () => {

@@ -1,5 +1,13 @@
 # MVP verification and remaining work
 
+## MCP activity output reduction — 2026-09-09
+
+- 66 Rust tests, 62 frontend integration tests and 4 build-channel checks passed, together with TypeScript checking, Rust formatting and diff checks. The MCP subset includes discovery/schema, ordinary list/get/create/replay/update/conflict projections, history default and limit boundaries, newest-first paging, empty/missing/cross-task/stale cursor handling and 100-entry truncation coverage.
+- A deterministic synthetic task with 100 retained activity entries serialized to 10,140 JSON bytes with history and 527 bytes through the ordinary task projection, a reduction of 9,613 bytes. This is a fixed byte comparison only; no token estimate is claimed, and the SQLite-backed task still retained all 100 entries after an update.
+- The managed integration recognizes complete older six- and seven-tool lists, reports exactly which tools are missing, and adds `get_task_activity` only through the explicit neutral integration-update flow. User-restricted tool lists remain unchanged and the user must reconnect MCP or restart Codex after updating.
+- The default development MCP executable was already locked by the running development integration, so validation did not terminate Codex or that process. The same development sidecar was built in an isolated target directory for the temporary-database STDIO smoke test.
+- No production package, installer, daily application database, global MCP registration or installed Skill was exercised. These changes have not been committed, pushed, tagged or published.
+
 ## v0.2.3 development candidate — 2026-09-07
 
 - 53 Rust tests, 52 frontend tests, 4 build-channel checks and 4 Sites checks passed, together with TypeScript checking, formatting/diff checks, the production frontend build and a seven-tool MCP STDIO smoke test against a unique temporary SQLite database.

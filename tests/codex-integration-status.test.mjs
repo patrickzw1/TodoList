@@ -29,7 +29,7 @@ test("same-path managed updates use neutral update copy and an explicit update a
     state: "update_available",
     configured: false,
     reason: "managed_update",
-    pendingUpdates: ["新版使用说明", "工具列表（新增 reorder_tasks）"],
+    pendingUpdates: ["新版使用说明", "工具列表（新增 get_task_activity）"],
     message: "安装路径未变，需要同步新版使用说明和工具列表。",
   });
   const presentation = codexIntegrationPresentation(update);
@@ -38,7 +38,7 @@ test("same-path managed updates use neutral update copy and an explicit update a
   assert.equal(presentation.actionLabel, "更新集成");
   assert.equal(presentation.confirmTitle, "更新 Codex 集成？");
   assert.match(presentation.confirmMessage, /安装路径未变/);
-  assert.match(presentation.confirmMessage, /reorder_tasks/);
+  assert.match(presentation.confirmMessage, /get_task_activity/);
   assert.deepEqual(sidebarCodexIntegrationPresentation(update, ""), {
     state: "update-available",
     label: "Codex 集成有新版可同步",
@@ -62,13 +62,13 @@ test("path migration never claims that the path is unchanged", () => {
 test("update success lists the actual changed items and reconnect guidance", () => {
   const updated = status({
     actionResult: "updated",
-    updatedItems: ["新版使用说明", "工具列表（新增 reorder_tasks）"],
+    updatedItems: ["新版使用说明", "工具列表（新增 get_task_activity）"],
   });
   const notice = codexIntegrationActionNotice(updated);
 
   assert.match(notice, /^集成已更新/);
   assert.match(notice, /新版使用说明/);
-  assert.match(notice, /reorder_tasks/);
+  assert.match(notice, /get_task_activity/);
   assert.match(notice, /重新连接 MCP 或重启 Codex/);
 });
 

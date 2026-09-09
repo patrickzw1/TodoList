@@ -22,6 +22,10 @@ const fixture = {
   ],
   tasks: [task("task-a", "project-1"), task("task-x", "project-2"), task("task-b", "project-1"), task("task-z", "project-1", true)],
 };
+fixture.tasks[0].activity = [
+  { id: "activity-old", action: "Created", actor: "test", at: "2026-09-09 09:00" },
+  { id: "activity-new", action: "Updated", actor: "test", at: "2026-09-09 10:00" },
+];
 const database = new DatabaseSync(databasePath);
 database.exec("CREATE TABLE workspace_snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
 database.prepare("INSERT INTO workspace_snapshot (id, version, payload_json, updated_at) VALUES (1, ?, ?, ?)")
@@ -106,16 +110,20 @@ try {
   if (listed.error) throw new Error(JSON.stringify(listed.error));
 
   const toolNames = listed.result.tools.map((tool) => tool.name).sort();
-  const expected = ["create_project", "create_task", "get_task", "list_projects", "list_tasks", "reorder_tasks", "update_task"];
+  const expected = ["create_project", "create_task", "get_task", "get_task_activity", "list_projects", "list_tasks", "reorder_tasks", "update_task"];
   if (JSON.stringify(toolNames) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected tools: ${toolNames.join(", ")}`);
   }
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
   if (!tools.get("get_task")?.description?.includes("attachments/images")) throw new Error("File metadata is not documented in get_task");
+  if (!tools.get("get_task_activity")?.description?.includes("newest entries first")) throw new Error("History ordering is not documented in get_task_activity");
+  const historyLimitSchema = tools.get("get_task_activity")?.inputSchema?.properties?.limit;
+  if (historyLimitSchema?.minimum !== 1 || historyLimitSchema?.maximum !== 50) throw new Error("History limit schema is not bounded to 1..50");
   for (const [toolName, propertyNames] of [
     ["create_project", ["request_id", "name", "color"]],
     ["create_task", ["request_id", "project_id", "title"]],
     ["list_tasks", ["limit", "cursor"]],
+    ["get_task_activity", ["task_id", "limit", "cursor"]],
     ["reorder_tasks", ["project_id", "archived", "expected_workspace_version", "task_ids"]],
   ]) {
     const properties = tools.get(toolName)?.inputSchema?.properties ?? {};
@@ -129,6 +137,9 @@ try {
   const firstPage = toolJson(await callTool("list_tasks", { project_id: "project-1", limit: 1 }));
   const initial = toolJson(await callTool("list_tasks", { project_id: "project-1" }));
   if (initial.tasks.map((item) => item.id).join(",") !== "task-a,task-b") throw new Error("Unexpected initial task order");
+  if (initial.tasks.some((item) => "activity" in item)) throw new Error("Normal task output still contains activity");
+  const history = toolJson(await callTool("get_task_activity", { task_id: "task-a", limit: 1 }));
+  if (history.activity[0]?.id !== "activity-new" || !history.nextCursor) throw new Error("Task history is not newest-first and paginated");
   const reordered = toolJson(await callTool("reorder_tasks", {
     project_id: "project-1", archived: false, expected_workspace_version: initial.workspaceVersion, task_ids: ["task-b", "task-a"],
   }));
