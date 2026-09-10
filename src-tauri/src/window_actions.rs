@@ -17,7 +17,10 @@ pub async fn open_sticky_window<R: tauri::Runtime>(
         .min_inner_size(320.0, 220.0)
         .resizable(true)
         .decorations(false)
-        .transparent(true)
+        // Keep the window and WebView opaque so horizontal resize cannot expose
+        // WebView2's gray transparent-composition frame between layout paints.
+        .transparent(false)
+        .background_color(tauri::window::Color(255, 254, 248, 255))
         .always_on_top(true)
         .skip_taskbar(true)
         .focused(false)

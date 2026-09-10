@@ -1,5 +1,5 @@
 import { Plus, X } from "@phosphor-icons/react";
-import { FormEvent, useEffect, useId, useMemo, useState } from "react";
+import { FormEvent, type ComponentProps, useEffect, useId, useMemo, useState } from "react";
 import type { AcceptanceCriterion, Priority, Project, Subtask, Task, TaskStatus } from "./types";
 import { normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "./date-utils.ts";
 import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "./project-colors.ts";
@@ -26,6 +26,11 @@ function splitLines(value: string) {
 
 function splitTags(value: string) {
   return [...new Set(value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function AutoHideTextarea({ className = "", ...props }: ComponentProps<"textarea">) {
+  const scrollbar = useAutoHideScrollbar<HTMLTextAreaElement>();
+  return <textarea className={`auto-hide-scrollbar ${className}`.trim()} {...props} {...scrollbar} />;
 }
 
 export function TaskEditorDialog({ task, projects, onClose, onSave }: {
@@ -73,7 +78,7 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
         <div className="dialog-heading"><h2>编辑任务</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭编辑"><X /></button></div>
         <div className="editor-scroll auto-hide-scrollbar" {...scrollbar}>
           <label>任务标题<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-          <label>描述<textarea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="补充任务背景或要求" /></label>
+          <label>描述<AutoHideTextarea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="补充任务背景或要求" /></label>
           <div className="editor-grid">
             <label>所属项目<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
             <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as TaskStatus)}><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="done">已完成</option></select></label>
@@ -82,10 +87,10 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
           </div>
           <label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="使用逗号分隔" /></label>
           <div className="editor-grid text-lists">
-            <label>子任务<textarea rows={5} value={subtasks} onChange={(event) => setSubtasks(event.target.value)} placeholder="每行一个子任务" /></label>
-            <label>验收标准<textarea rows={5} value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} placeholder="每行一项验收标准" /></label>
+            <label>子任务<AutoHideTextarea rows={5} value={subtasks} onChange={(event) => setSubtasks(event.target.value)} placeholder="每行一个子任务" /></label>
+            <label>验收标准<AutoHideTextarea rows={5} value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} placeholder="每行一项验收标准" /></label>
           </div>
-          <label>依赖关系<textarea rows={3} value={dependencies} onChange={(event) => setDependencies(event.target.value)} placeholder="每行一个依赖" /></label>
+          <label>依赖关系<AutoHideTextarea rows={3} value={dependencies} onChange={(event) => setDependencies(event.target.value)} placeholder="每行一个依赖" /></label>
         </div>
         <div className="dialog-actions"><button type="button" onClick={onClose}>取消</button><button className="dialog-primary" type="submit" disabled={!title.trim()}>保存修改</button></div>
       </form>
@@ -151,6 +156,7 @@ function ProjectColorPicker({ value, onChange, onValidityChange }: {
 export function ProjectEditorDialog({ projects, project, activeTaskCount = 0, archivedTaskCount = 0, onClose, onSave, onRequestDelete }: {
   projects: Project[]; project?: Project; activeTaskCount?: number; archivedTaskCount?: number; onClose: () => void; onSave: (name: string, color: string) => void; onRequestDelete?: () => void;
 }) {
+  const scrollbar = useAutoHideScrollbar<HTMLFormElement>();
   const [name, setName] = useState(project?.name ?? "");
   const [color, setColor] = useState(normalizeProjectColor(project?.color ?? "") ?? PROJECT_COLORS[projects.length % PROJECT_COLORS.length]);
   const [colorValid, setColorValid] = useState(true);
@@ -162,7 +168,7 @@ export function ProjectEditorDialog({ projects, project, activeTaskCount = 0, ar
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form className="create-dialog project-dialog" onSubmit={submit}>
+      <form className="create-dialog project-dialog auto-hide-scrollbar" onSubmit={submit} {...scrollbar}>
         <div className="dialog-heading"><h2>{project ? "编辑项目" : "新建项目"}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目编辑"><X /></button></div>
         <label>项目名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：个人网站发布" /></label>
         <ProjectColorPicker value={color} onChange={setColor} onValidityChange={setColorValid} />
@@ -191,6 +197,7 @@ export function ProjectDeletionDialog({ project, projects, activeTaskCount, arch
   const [newColor, setNewColor] = useState<string>(PROJECT_COLORS[projects.length % PROJECT_COLORS.length]);
   const [newColorValid, setNewColorValid] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
   const duplicate = projects.some((item) => item.id !== project.id && item.name.trim().toLocaleLowerCase() === newName.trim().toLocaleLowerCase());
   const total = activeTaskCount + archivedTaskCount;
 
@@ -214,7 +221,7 @@ export function ProjectDeletionDialog({ project, projects, activeTaskCount, arch
   };
 
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <div className="create-dialog project-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="project-delete-title">
+    <div className="create-dialog project-delete-dialog auto-hide-scrollbar" role="dialog" aria-modal="true" aria-labelledby="project-delete-title" {...scrollbar}>
       <div className="dialog-heading"><h2 id="project-delete-title">删除项目“{project.name}”</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目删除"><X /></button></div>
       <p className="project-delete-summary">当前有 <strong>{activeTaskCount}</strong> 个活跃任务、<strong>{archivedTaskCount}</strong> 个已归档任务。</p>
       <label className="project-delete-option"><input type="radio" name="delete-mode" checked={mode === "move"} onChange={() => setMode("move")} /><span><strong>保留任务并转移</strong><small>任务、归档状态、附件与图片都会保留。</small></span></label>
@@ -231,9 +238,10 @@ export function ProjectDeletionDialog({ project, projects, activeTaskCount, arch
 export function ConfirmDialog({ title, description, confirmLabel, onClose, onConfirm }: {
   title: string; description: string; confirmLabel: string; onClose: () => void; onConfirm: () => void;
 }) {
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="create-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+      <div className="create-dialog confirm-dialog auto-hide-scrollbar" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description" {...scrollbar}>
         <div className="dialog-heading"><h2 id="confirm-title">{title}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭确认"><X /></button></div>
         <p id="confirm-description">{description}</p>
         <div className="dialog-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="danger-action" onClick={onConfirm}>{confirmLabel}</button></div>
@@ -245,9 +253,10 @@ export function ConfirmDialog({ title, description, confirmLabel, onClose, onCon
 export function NoticeDialog({ title, description, onClose }: {
   title: string; description: string; onClose: () => void;
 }) {
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="create-dialog confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" aria-describedby="notice-description">
+      <div className="create-dialog confirm-dialog auto-hide-scrollbar" role="alertdialog" aria-modal="true" aria-labelledby="notice-title" aria-describedby="notice-description" {...scrollbar}>
         <div className="dialog-heading"><h2 id="notice-title">{title}</h2><button type="button" className="icon-button" onClick={onClose} aria-label="关闭提示"><X /></button></div>
         <p id="notice-description">{description}</p>
         <div className="dialog-actions"><button type="button" className="dialog-primary" onClick={onClose}>知道了</button></div>

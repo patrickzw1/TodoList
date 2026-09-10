@@ -3,10 +3,10 @@ import {
   List, LockKey, MagnifyingGlass, PencilSimple, Play, Plus, PushPin, PushPinSlash, Sun, Trash, X,
 } from "@phosphor-icons/react";
 import { isTauri, invoke } from "@tauri-apps/api/core";
-import { FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Task, TaskStatus, Workspace } from "./types";
 import { CodexIntegrationCard, readCodexIntegrationStatus, type CodexIntegrationStatus } from "./CodexIntegrationCard";
-import { sidebarCodexIntegrationPresentation } from "./codex-integration-presentation";
+import { hasCodexIntegrationUpdate, sidebarCodexIntegrationPresentation } from "./codex-integration-presentation";
 import { DataBackupCard } from "./DataBackupCard";
 import { TaskFileSections } from "./TaskFiles";
 import { SoftwareUpdateCard, SoftwareUpdateProvider, useSoftwareUpdate } from "./SoftwareUpdateCard";
@@ -109,7 +109,7 @@ function Sidebar({ projects, view, currentVersion, updateAvailable, storageState
       </div>
       <div className="sidebar-bottom">
         <button disabled={openingSticky} onClick={onOpenSticky} title="打开桌面便签并最小化任务台"><PushPin />{openingSticky ? "正在打开便签……" : "桌面便签"}</button>
-        <button className={view.kind === "integration" ? "active" : ""} onClick={() => onView({ kind: "integration" })}><LinkSimple />连接与权限</button>
+        <button className={`integration-nav ${view.kind === "integration" ? "active" : ""}`} onClick={() => onView({ kind: "integration" })}><LinkSimple /><span>连接与权限</span>{hasCodexIntegrationUpdate(integrationStatus) && <i>可更新</i>}</button>
         <button className={`settings-nav ${view.kind === "settings" ? "active" : ""}`} onClick={() => onView({ kind: "settings" })}><Gear /><span>设置</span><small>v{currentVersion}</small>{updateAvailable && <i>可更新</i>}</button>
         <div className={`local-state ${storageState}`} title={storageMessage}><span className="saved-dot" />{storageMessage}</div>
         <div className={`mcp-state ${integrationCopy.state}`} title={integrationError || integrationStatus?.message}><LinkSimple />{integrationCopy.label}</div>
@@ -420,13 +420,16 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
   const completedSubtasks = task.subtasks.filter((item) => item.completed).length;
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [detailExpanded, setDetailExpanded] = useState(false);
-  const scrollbar = useAutoHideScrollbar<HTMLElement>();
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
   const visibleActivity = activityItemsForDetail(task.activity, activityExpanded);
   useEffect(() => setActivityExpanded(false), [task.id]);
   return (
-    <aside className={`detail-panel auto-hide-scrollbar ${detailExpanded ? "is-expanded" : ""} ${closing ? "is-closing" : ""}`} {...scrollbar}>
-      <div className="detail-breadcrumb">{project.name}<span>›</span>{task.title}</div>
-      <div className="detail-title-row"><h2>{task.title}</h2><div className="detail-title-actions"><button type="button" className={`icon-button detail-expand-button ${detailExpanded ? "is-expanded" : ""}`} onClick={() => setDetailExpanded((current) => !current)} aria-label={detailExpanded ? "收起任务详情" : "展开任务详情"} aria-pressed={detailExpanded} title={detailExpanded ? "收起任务详情" : "展开任务详情"}>{detailExpanded ? <ArrowsInSimple /> : <ArrowsOutSimple />}</button><button className={`icon-button detail-pin-button ${task.pinned ? "is-pinned" : ""}`} onClick={onTogglePin} aria-label={task.pinned ? "取消桌面置顶" : "置顶到桌面"} aria-pressed={task.pinned} title={task.pinned ? "取消桌面置顶" : "置顶到桌面"}><PushPin weight={task.pinned ? "fill" : "regular"} /></button><button className="icon-button" onClick={onEdit} aria-label="编辑任务" title="编辑任务"><PencilSimple /></button><button className="icon-button" onClick={onClose} aria-label="关闭详情"><X /></button></div></div>
+    <aside className={`detail-panel ${detailExpanded ? "is-expanded" : ""} ${closing ? "is-closing" : ""}`}>
+      <header className="detail-header">
+        <div className="detail-breadcrumb">{project.name}<span>›</span>{task.title}</div>
+        <div className="detail-title-row"><h2 title={task.title}>{task.title}</h2><div className="detail-title-actions"><button type="button" className={`icon-button detail-expand-button ${detailExpanded ? "is-expanded" : ""}`} onClick={() => setDetailExpanded((current) => !current)} aria-label={detailExpanded ? "收起任务详情" : "展开任务详情"} aria-pressed={detailExpanded} title={detailExpanded ? "收起任务详情" : "展开任务详情"}>{detailExpanded ? <ArrowsInSimple /> : <ArrowsOutSimple />}</button><button className={`icon-button detail-pin-button ${task.pinned ? "is-pinned" : ""}`} onClick={onTogglePin} aria-label={task.pinned ? "取消桌面置顶" : "置顶到桌面"} aria-pressed={task.pinned} title={task.pinned ? "取消桌面置顶" : "置顶到桌面"}><PushPin weight={task.pinned ? "fill" : "regular"} /></button><button className="icon-button" onClick={onEdit} aria-label="编辑任务" title="编辑任务"><PencilSimple /></button><button className="icon-button" onClick={onClose} aria-label="关闭详情"><X /></button></div></div>
+      </header>
+      <div className="detail-scroll auto-hide-scrollbar" role="region" aria-label="任务详情内容" tabIndex={0} {...scrollbar}>
       <dl className="task-meta">
         <div><dt>状态</dt><dd><span className={`state-dot ${task.status}`} />{statusLabel[task.status]}</dd></div>
         <div><dt>优先级</dt><dd>{task.priority === "high" && <ArrowUp className="priority-arrow" />} {task.priority === "high" ? "高" : task.priority === "medium" ? "中" : "低"}</dd></div>
@@ -466,6 +469,7 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
           {visibleActivity.length ? visibleActivity.map((activity) => <div className="activity-item" key={activity.id}><LinkSimple /><span>{activity.action}</span><time dateTime={activity.at}>{formatActivityTime(activity.at)}</time></div>) : <p className="empty-detail">暂无活动记录</p>}
         </div>
       </section>
+      </div>
       <div className="detail-actions">
         {task.archived ? <><button className="secondary-action" onClick={onArchive}><ArrowCounterClockwise />恢复任务</button><button className="danger-action" onClick={onDelete}><Trash />永久删除</button></> : <><button className="secondary-action" onClick={onArchive}><Archive />归档</button><button className="secondary-action" onClick={onToggle}>{task.status === "done" ? "重新打开" : "标记完成"}</button></>}
       </div>
@@ -473,21 +477,26 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
   );
 }
 
+function ScrollableSettingsPage({ label, children }: { label: string; children: ReactNode }) {
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
+  return <div className="settings-page auto-hide-scrollbar" role="region" aria-label={label} tabIndex={0} {...scrollbar}>{children}</div>;
+}
+
 function IntegrationView({ onStatusChange }: { onStatusChange: (status: CodexIntegrationStatus) => void }) {
   return (
-    <div className="settings-page">
+    <ScrollableSettingsPage label="连接与权限设置">
       <div className="settings-icon"><LinkSimple /></div><h1>连接与权限</h1>
       <p>TodoList 本体始终独立工作；连接后 Codex 才能按需读取、创建和更新任务。</p>
       <div className="settings-card"><div><strong>本地 MCP 程序</strong><span>STDIO sidecar 已随 TodoList 安装，桌面应用无需一直打开</span></div><span className="quiet-badge">已就绪</span></div>
       <CodexIntegrationCard onStatusChange={onStatusChange} />
       <div className="settings-card"><div><strong>当前数据范围</strong><span>启用后可读取、创建和更新全部本地项目</span></div><span className="quiet-badge">MVP</span></div>
       <div className="permission-note"><LockKey />写入前会检查任务版本；用户完成的任务不会被 Codex 默认重新打开。</div>
-    </div>
+    </ScrollableSettingsPage>
   );
 }
 
 function SettingsView({ workspace, onImport }: { workspace: Workspace; onImport: (backup: WorkspaceBackup) => Promise<void> }) {
-  return <div className="settings-page"><div className="settings-icon"><Gear /></div><h1>设置</h1><p>桌面便签默认始终置顶，但只会在你主动置顶任务后出现。</p><div className="settings-card"><div><strong>便签窗口</strong><span>不由 Codex 自动打开</span></div><span className="quiet-badge">推荐</span></div><DataBackupCard workspace={workspace} onImport={onImport} /><SoftwareUpdateCard /></div>;
+  return <ScrollableSettingsPage label="TodoList 设置"><div className="settings-icon"><Gear /></div><h1>设置</h1><p>桌面便签默认始终置顶，但只会在你主动置顶任务后出现。</p><div className="settings-card"><div><strong>便签窗口</strong><span>不由 Codex 自动打开</span></div><span className="quiet-badge">推荐</span></div><DataBackupCard workspace={workspace} onImport={onImport} /><SoftwareUpdateCard /></ScrollableSettingsPage>;
 }
 
 function CreateTaskDialog({ projects, defaultProjectId, onClose, onCreate }: {
@@ -495,10 +504,11 @@ function CreateTaskDialog({ projects, defaultProjectId, onClose, onCreate }: {
 }) {
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState(defaultProjectId);
+  const scrollbar = useAutoHideScrollbar<HTMLFormElement>();
   const submit = (event: FormEvent) => { event.preventDefault(); if (title.trim()) onCreate(title.trim(), projectId); };
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form className="create-dialog" onSubmit={submit}>
+      <form className="create-dialog auto-hide-scrollbar" onSubmit={submit} {...scrollbar}>
         <div className="dialog-heading"><h2>新建任务</h2><button type="button" className="icon-button" onClick={onClose}><X /></button></div>
         <label>任务标题<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="需要完成什么？" /></label>
         <label>所属项目<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
@@ -533,6 +543,8 @@ function MainApp() {
   const [integrationStatus, setIntegrationStatus] = useState<CodexIntegrationStatus | null>(null);
   const [integrationError, setIntegrationError] = useState("");
   const openingStickyRef = useRef(false);
+  const outsideDetailPointer = useRef<number | null>(null);
+  const outsideDetailResetTimer = useRef<number | null>(null);
   const workspaceScrollbar = useAutoHideScrollbar<HTMLDivElement>();
   const acceptIntegrationStatus = useCallback((status: CodexIntegrationStatus) => {
     setIntegrationStatus(status);
@@ -787,9 +799,43 @@ function MainApp() {
     setCreateTaskAfterProject(true);
     setShowCreateProject(true);
   };
+  const isOutsideDetailTarget = (target: EventTarget | null) => !(target instanceof Element && target.closest(".detail-panel, .image-viewer, .modal-backdrop"));
+  const beginOutsideDetailInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!selectedTask || !selectedProject) return;
+    if (!isOutsideDetailTarget(event.target)) return;
+    outsideDetailPointer.current = event.pointerId;
+    if (event.pointerType === "mouse") event.preventDefault();
+    event.stopPropagation();
+    closeDetail();
+  };
+  const endOutsideDetailInteraction = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
+    if (outsideDetailPointer.current !== event.pointerId) return;
+    event.stopPropagation();
+    if (outsideDetailResetTimer.current !== null) window.clearTimeout(outsideDetailResetTimer.current);
+    if (cancelled) {
+      outsideDetailPointer.current = null;
+      outsideDetailResetTimer.current = null;
+      return;
+    }
+    outsideDetailResetTimer.current = window.setTimeout(() => {
+      outsideDetailPointer.current = null;
+      outsideDetailResetTimer.current = null;
+    }, 0);
+  };
+  const handleOutsideDetailClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const shouldBlockPointerClick = outsideDetailPointer.current !== null;
+    const shouldCloseDetail = Boolean(selectedTask && selectedProject && isOutsideDetailTarget(event.target));
+    if (!shouldBlockPointerClick && !shouldCloseDetail) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (outsideDetailResetTimer.current !== null) window.clearTimeout(outsideDetailResetTimer.current);
+    outsideDetailPointer.current = null;
+    outsideDetailResetTimer.current = null;
+    if (shouldCloseDetail) closeDetail();
+  };
 
   return (
-    <div className={`app-shell ${selectedTask && selectedProject ? "has-detail" : ""}`}>
+    <div className={`app-shell ${selectedTask && selectedProject ? "has-detail" : ""}`} onPointerDownCapture={beginOutsideDetailInteraction} onPointerUpCapture={endOutsideDetailInteraction} onPointerCancelCapture={(event) => endOutsideDetailInteraction(event, true)} onClickCapture={handleOutsideDetailClick}>
       <Sidebar projects={workspace.projects} view={view} currentVersion={softwareUpdate.currentVersion} updateAvailable={softwareUpdate.phase === "available"} storageState={storageState} storageMessage={storageMessage} integrationStatus={integrationStatus} integrationError={integrationError} openingSticky={openingSticky} onOpenSticky={() => void showSticky(true)} onView={(next) => { setView(next); setSelectedTaskIds(new Set()); if (next.kind === "integration" || next.kind === "settings") clearSelectedTask(); }} onCreate={beginTaskCreation} onCreateProject={() => { setCreateTaskAfterProject(false); setShowCreateProject(true); }} onEditProject={setEditingProjectId} />
       <main className="workspace-panel">
         {!ready && <div className="loading-bar" />}
@@ -805,7 +851,7 @@ function MainApp() {
           <footer className="workspace-footer">共 {visibleTasks.length} 个任务（未完成 {visibleTasks.filter((task) => task.status !== "done").length} 个）</footer>
         </> : view.kind === "integration" ? <IntegrationView onStatusChange={acceptIntegrationStatus} /> : <SettingsView workspace={workspace} onImport={importWorkspace} />}
       </main>
-      {selectedTask && selectedProject && <><button type="button" className="detail-backdrop" aria-label="关闭任务详情" onClick={closeDetail} /><TaskDetail task={selectedTask} project={selectedProject} tasks={workspace.tasks} closing={detailClosing} onClose={closeDetail} onEdit={() => setEditingTaskId(selectedTask.id)} onToggle={() => toggleTask(selectedTask.id)} onTogglePin={() => togglePin(selectedTask.id)} onSubtask={(id) => toggleSubtask(selectedTask.id, id)} onAcceptanceCriterion={(id) => toggleAcceptanceCriterion(selectedTask.id, id)} onArchive={() => toggleArchive(selectedTask.id)} onDelete={() => setPendingDeletion({ kind: "task", taskId: selectedTask.id })} onAddFile={(kind, file) => addTaskFile(selectedTask.id, kind, file)} onRemoveFile={(kind, fileId) => removeTaskFile(selectedTask.id, kind, fileId)} /></>}
+      {selectedTask && selectedProject && <TaskDetail task={selectedTask} project={selectedProject} tasks={workspace.tasks} closing={detailClosing} onClose={closeDetail} onEdit={() => setEditingTaskId(selectedTask.id)} onToggle={() => toggleTask(selectedTask.id)} onTogglePin={() => togglePin(selectedTask.id)} onSubtask={(id) => toggleSubtask(selectedTask.id, id)} onAcceptanceCriterion={(id) => toggleAcceptanceCriterion(selectedTask.id, id)} onArchive={() => toggleArchive(selectedTask.id)} onDelete={() => setPendingDeletion({ kind: "task", taskId: selectedTask.id })} onAddFile={(kind, file) => addTaskFile(selectedTask.id, kind, file)} onRemoveFile={(kind, fileId) => removeTaskFile(selectedTask.id, kind, fileId)} />}
       {showCreate && defaultTaskProjectId && <CreateTaskDialog projects={workspace.projects} defaultProjectId={defaultTaskProjectId} onClose={() => setShowCreate(false)} onCreate={createTask} />}
       {showCreateProject && <ProjectEditorDialog projects={workspace.projects} onClose={() => { setShowCreateProject(false); setCreateTaskAfterProject(false); }} onSave={createProject} />}
       {editingProject && <ProjectEditorDialog projects={workspace.projects} project={editingProject} activeTaskCount={workspace.tasks.filter((task) => task.projectId === editingProject.id && !task.archived).length} archivedTaskCount={workspace.tasks.filter((task) => task.projectId === editingProject.id && task.archived).length} onClose={() => setEditingProjectId(null)} onSave={(name, color) => saveProject(editingProject.id, name, color)} onRequestDelete={() => { setEditingProjectId(null); setPendingDeletion({ kind: "project", projectId: editingProject.id }); }} />}
@@ -826,6 +872,7 @@ function StickyApp() {
   const [openingMain, setOpeningMain] = useState(false);
   const [windowError, setWindowError] = useState<string | null>(null);
   const openingMainRef = useRef(false);
+  const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
   const openTaskBoard = async () => {
     if (openingMainRef.current) return;
     openingMainRef.current = true;
@@ -859,7 +906,7 @@ function StickyApp() {
         <div><PushPin weight="fill" /><span>桌面任务</span><small>{pinnedTasks.length}</small></div>
         <button data-tauri-drag-region="false" onClick={() => void closeCurrentWindow()} aria-label="关闭便签"><X /></button>
       </header>
-      <div className="sticky-body">
+      <div className="sticky-body auto-hide-scrollbar" role="region" aria-label="桌面置顶任务" tabIndex={0} {...scrollbar}>
         {pinnedTasks.length ? pinnedTasks.map((task) => (
           <article className={`sticky-task ${task.status === "done" ? "completed" : ""}`} key={task.id}>
             <StatusButton task={task} onToggle={() => toggleTask(task.id)} />

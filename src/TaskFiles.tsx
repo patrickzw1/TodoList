@@ -7,6 +7,7 @@ import {
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ManagedFile } from "./types";
+import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
 
 type FileCollection = "attachments" | "images";
 
@@ -85,6 +86,7 @@ function ImageViewer({ files, index, onIndex, onClose }: { files: ManagedFile[];
   const [naturalWidth, setNaturalWidth] = useState(0);
   const closeButton = useRef<HTMLButtonElement>(null);
   const viewer = useRef<HTMLDivElement>(null);
+  const canvasScrollbar = useAutoHideScrollbar<HTMLDivElement>();
   useEffect(() => {
     closeButton.current?.focus();
     const key = (event: KeyboardEvent) => {
@@ -120,7 +122,7 @@ function ImageViewer({ files, index, onIndex, onClose }: { files: ManagedFile[];
           <button ref={closeButton} type="button" aria-label="关闭大图" onClick={onClose}><X /></button>
         </div>
       </header>
-      <div className="image-viewer-canvas">
+      <div className="image-viewer-canvas auto-hide-scrollbar" role="region" aria-label="图片画布" tabIndex={0} {...canvasScrollbar}>
         {image.url ? <img className={mode === "fit" ? "is-fit" : "is-actual"} style={mode === "actual" && naturalWidth ? { width: `${Math.round(naturalWidth * zoom / 100)}px` } : undefined} src={image.url} alt={file?.originalName ?? ""} onLoad={(event) => setNaturalWidth(event.currentTarget.naturalWidth)} /> : <div className="image-viewer-error"><WarningCircle />{image.error || "正在载入图片…"}</div>}
       </div>
       {files.length > 1 && <>

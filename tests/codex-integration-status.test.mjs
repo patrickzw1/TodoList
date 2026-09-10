@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   codexIntegrationActionNotice,
   codexIntegrationPresentation,
+  hasCodexIntegrationUpdate,
   sidebarCodexIntegrationPresentation,
 } from "../src/codex-integration-presentation.ts";
 
@@ -43,6 +44,16 @@ test("same-path managed updates use neutral update copy and an explicit update a
     state: "update-available",
     label: "Codex 集成有新版可同步",
   });
+  assert.equal(hasCodexIntegrationUpdate(update), true);
+});
+
+test("sidebar update badge appears only for a real managed integration update", () => {
+  assert.equal(hasCodexIntegrationUpdate(null), false);
+  for (const state of ["configured", "not_configured", "partial", "conflict", "development"]) {
+    assert.equal(hasCodexIntegrationUpdate(status({ state })), false, state);
+  }
+  assert.equal(hasCodexIntegrationUpdate(status({ state: "update_available" })), true);
+  assert.equal(hasCodexIntegrationUpdate(status({ state: "configured", actionResult: "updated" })), false);
 });
 
 test("path migration never claims that the path is unchanged", () => {

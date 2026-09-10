@@ -89,4 +89,65 @@ test("sticky layout fills a resized viewport without changing its native window 
   assert.match(styles, /\.sticky-body \{[^}]*flex: 1;[^}]*min-height: 0;[^}]*overflow: auto;/);
   assert.match(nativeWindowActions, /\.min_inner_size\(320\.0, 220\.0\)/);
   assert.match(nativeWindowActions, /\.resizable\(true\)/);
+  assert.match(nativeWindowActions, /\.transparent\(false\)/);
+  assert.doesNotMatch(nativeWindowActions, /\.transparent\(true\)/);
+  assert.match(nativeWindowActions, /\.background_color\(tauri::window::Color\(255, 254, 248, 255\)\)/);
+  assert.match(styles, /body:has\(\.sticky-window\) \{[^}]*background: #fffef8;/);
+});
+
+test("task detail leaves wheel delivery on the exposed workspace while blocking outside pointer actions", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(app, /detail-backdrop/);
+  assert.match(app, /onPointerDownCapture=\{beginOutsideDetailInteraction\}/);
+  assert.match(app, /onPointerUpCapture=\{endOutsideDetailInteraction\}/);
+  assert.match(app, /onPointerCancelCapture=\{\(event\) => endOutsideDetailInteraction\(event, true\)\}/);
+  assert.match(app, /onClickCapture=\{handleOutsideDetailClick\}/);
+  assert.match(app, /target\.closest\("\.detail-panel, \.image-viewer, \.modal-backdrop"\)/);
+  assert.match(app, /if \(event\.pointerType === "mouse"\) event\.preventDefault\(\)/);
+  assert.doesNotMatch(app, /onWheel|WheelEvent|dispatchEvent\([^)]*wheel/i);
+});
+
+test("task detail keeps header and footer outside its independent scroll region", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+  ]);
+  const detail = app.slice(app.indexOf("function TaskDetail"), app.indexOf("function ScrollableSettingsPage"));
+  assert.ok(detail.indexOf('className="detail-header"') < detail.indexOf('className="detail-scroll auto-hide-scrollbar"'));
+  assert.ok(detail.indexOf('className="detail-scroll auto-hide-scrollbar"') < detail.indexOf('className="detail-actions"'));
+  assert.match(styles, /\.detail-panel \{[^}]*overflow: hidden;/);
+  assert.match(styles, /\.detail-header \{[^}]*flex: 0 0 auto;/);
+  assert.match(styles, /\.detail-scroll \{[^}]*flex: 1 1 auto;[^}]*min-height: 0;[^}]*overflow: auto;/);
+  assert.match(styles, /\.detail-actions \{[^}]*flex: 0 0 auto;/);
+});
+
+test("real overflow regions and editor textareas use the shared scrollbar treatment", async () => {
+  const [app, taskFiles, dialogs, styles] = await Promise.all([
+    readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/TaskFiles.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/dialogs.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(app, /workspace-content auto-hide-scrollbar/);
+  assert.match(app, /sticky-body auto-hide-scrollbar/);
+  assert.match(taskFiles, /image-viewer-canvas auto-hide-scrollbar/);
+  assert.match(dialogs, /function AutoHideTextarea[\s\S]*useAutoHideScrollbar<HTMLTextAreaElement>/);
+  assert.match(dialogs, /project-dialog auto-hide-scrollbar/);
+  assert.match(dialogs, /project-delete-dialog auto-hide-scrollbar/);
+  assert.match(dialogs, /confirm-dialog auto-hide-scrollbar/);
+  assert.match(styles, /\.create-dialog \{[^}]*max-height:[^;]+;[^}]*overflow: auto;/);
+  assert.match(styles, /\.project-nav \{[^}]*overflow-y: auto;[^}]*scrollbar-width: none;/);
+  assert.match(styles, /\.project-nav::-webkit-scrollbar \{[^}]*display: none;/);
+});
+
+test("integration and settings share the auto-hiding scroll container", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(app, /function ScrollableSettingsPage[\s\S]*useAutoHideScrollbar<HTMLDivElement>\(\)[\s\S]*settings-page auto-hide-scrollbar/);
+  assert.match(app, /<ScrollableSettingsPage label="连接与权限设置">/);
+  assert.match(app, /<ScrollableSettingsPage label="TodoList 设置">/);
+  assert.match(styles, /\.settings-page \{[^}]*height: 100%;[^}]*overflow-y: auto;/);
+  assert.match(styles, /\.auto-hide-scrollbar\.is-scroll-active[\s\S]*\.auto-hide-scrollbar\.is-scrollbar-near/);
 });

@@ -112,3 +112,7 @@ export function sidebarCodexIntegrationPresentation(
     label: status.canConfigure ? "Codex 集成未配置" : "网页预览 · 集成不可用",
   };
 }
+
+export function hasCodexIntegrationUpdate(status: CodexIntegrationStatus | null) {
+  return status?.state === "update_available";
+}
