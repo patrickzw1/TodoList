@@ -131,8 +131,11 @@ test("release scripts enforce the cloud signing and draft-release contract", asy
   assert.match(publish, /function Get-ReleaseById/);
   assert.doesNotMatch(publish, /releases\/tags\//);
   assert.match(publish, /Remote \$Tag moved after checkout/);
-  assert.match(publish, /-draft=false/);
-  assert.match(publish, /release', 'download'/);
+  assert.match(publish, /draft = \$false; prerelease = \$false; make_latest = 'true'/);
+  assert.match(publish, /Invoke-GhApi "repos\/\$Repository\/releases" 'POST'/);
+  assert.match(publish, /function Save-ReleaseAsset/);
+  assert.match(publish, /Invoke-WebRequest[\s\S]*?-OutFile/);
+  assert.doesNotMatch(publish, /'release', '(create|edit|upload|download)'/);
   assert.match(publish, /Get-Sha256/);
   assert.doesNotMatch(publish, /release', 'delete'/);
 });

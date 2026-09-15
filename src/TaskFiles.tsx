@@ -74,8 +74,8 @@ function ImageCard({ file, layer, current, onOpen }: { file: ManagedFile; layer:
     ? <img src={image.url} alt={current ? file.originalName : ""} />
     : <span className={image.error ? "image-unavailable" : "image-loading"}>{image.error ? <><WarningCircle />图片不可用</> : "正在载入图片…"}</span>;
   return current
-    ? <button type="button" className="image-stack-card is-current" style={{ "--stack-layer": layer } as React.CSSProperties} onClick={onOpen} title="打开大图">{content}<span className="image-open-hint"><MagnifyingGlassPlus />打开大图</span></button>
-    : <div className="image-stack-card" aria-hidden="true" style={{ "--stack-layer": layer } as React.CSSProperties}>{content}</div>;
+    ? <button type="button" className="image-stack-card is-current" onClick={onOpen} title="打开大图">{content}<span className="image-open-hint"><MagnifyingGlassPlus />打开大图</span></button>
+    : <div className={`image-stack-card ${layer === 1 ? "is-back-left" : "is-back-right"}`} aria-hidden="true">{content}</div>;
 }
 
 function ImageViewer({ files, index, onIndex, onClose }: { files: ManagedFile[]; index: number; onIndex: (index: number) => void; onClose: () => void }) {

@@ -47,6 +47,18 @@ upload may retain a workflow-owned draft; the retry safely replaces only the fou
 known assets in that marked draft. An unowned draft or any public release causes
 the workflow to stop for manual review.
 
+Publication uses the REST creation response's release ID and that release's
+validated upload URL; it does not wait for a newly created draft to appear in
+the release list. Existing drafts are found through the authenticated, paginated
+list on both Windows PowerShell 5.1 and PowerShell 7, then rechecked by ID before
+changing their metadata or replacing known assets. Downloads use the selected
+release's asset IDs and preserve binary bytes. Publication rechecks those same
+asset IDs, the draft marker and the remote tag after checksum verification.
+Temporary GET failures have at most four attempts with 1, 2 and 4 second delays;
+401/403 and mutations are never automatically retried. A lost creation response
+can leave an owned draft: rerun the workflow to recover it instead of repeating
+the creation POST inside the failed attempt.
+
 The build creates `TodoList_<version>_x64-setup.exe`, its `.sig`, `latest.json`
 and `SHA256SUMS.txt` under `target/package-build/release/bundle/nsis`. A normal
 release is required for GitHub's `/releases/latest` endpoint; prereleases do not
