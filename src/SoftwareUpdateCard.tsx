@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { Update } from "@tauri-apps/plugin-updater";
 import { ArrowClockwise, DownloadSimple, FolderOpen, Trash } from "@phosphor-icons/react";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -27,8 +27,8 @@ function createRuntime(): SoftwareUpdateRuntime {
     ...(desktop ? {
       getCurrentVersion: getVersion,
       check: async () => {
-        const update = await check({ timeout: 30_000, allowDowngrades: false });
-        return update ? managedUpdate(update) : null;
+        const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>("check_stable_update");
+        return metadata ? managedUpdate(new Update(metadata)) : null;
       },
       getComponentStatus: () => invoke("component_build_status"),
       getRecovery: () => invoke("update_recovery_status"),

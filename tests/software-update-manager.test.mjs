@@ -138,3 +138,42 @@ test("disposing during a check closes the late update and publishes nothing else
   await pending;
   assert.equal(update.calls.close, 1);
 });
+
+test("highest release resource failures remain errors and six-hour throttling still applies", async () => {
+  let clock = 100;
+  let checks = 0;
+  const message = "版本检查失败：最高正式版本 0.2.10 缺少 latest.json 更新清单。";
+  const manager = createSoftwareUpdateManager({
+    desktop: true,
+    buildVersion: "0.2.9",
+    now: () => clock,
+    check: async () => { checks += 1; throw message; },
+  });
+  await manager.initialize();
+  assert.equal(manager.getSnapshot().phase, "error");
+  assert.equal(manager.getSnapshot().message, message);
+  assert.equal(manager.getSnapshot().availableVersion, null);
+  await manager.checkIfStale();
+  assert.equal(checks, 1);
+  clock += UPDATE_CHECK_INTERVAL_MS;
+  await manager.checkIfStale();
+  assert.equal(checks, 2);
+});
+
+test("Tauri download signature rejection never invokes installation or relaunch", async () => {
+  const update = fakeUpdate("0.2.10");
+  update.download = async () => { throw new Error("signature verification failed"); };
+  let relaunches = 0;
+  const manager = createSoftwareUpdateManager({
+    desktop: true,
+    buildVersion: "0.2.9",
+    check: async () => update,
+    relaunch: async () => { relaunches += 1; },
+  });
+  await manager.initialize();
+  assert.equal(await manager.downloadAndInstall(), false);
+  assert.equal(update.calls.install, 0);
+  assert.equal(relaunches, 0);
+  assert.equal(manager.getSnapshot().phase, "error");
+  assert.match(manager.getSnapshot().message, /签名验证失败/);
+});

@@ -6,6 +6,7 @@ use tauri::Manager;
 mod backup;
 mod codex_integration;
 mod managed_files;
+mod stable_update;
 mod update_recovery;
 pub mod window_actions;
 
@@ -98,6 +99,7 @@ pub fn run() {
             codex_integration::codex_integration_status,
             codex_integration::configure_codex_integration,
             codex_integration::remove_codex_integration,
+            stable_update::check_stable_update,
             update_recovery::component_build_status,
             update_recovery::update_recovery_status,
             update_recovery::retry_update_installer,

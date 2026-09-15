@@ -6,8 +6,14 @@ function errorDetail(error: unknown) {
 
 export function friendlyUpdateError(error: unknown, stage: UpdateFailureStage) {
   const detail = errorDetail(error).trim();
+  if (stage === "check" && detail.startsWith("当前构建未配置更新源")) {
+    return detail;
+  }
   if (/no.*endpoint|endpoint.*(?:empty|invalid|not configured|missing)|configuration.*(?:missing|invalid)|update.*not configured|pubkey.*(?:empty|missing)/i.test(detail)) {
     return "当前构建未配置更新源。开发版请重新构建，日常使用请在安装版检查更新。";
+  }
+  if (stage === "check" && detail.startsWith("版本检查失败：")) {
+    return detail;
   }
   if (stage === "download") {
     if (/signature|verify|public key|minisign|验签/i.test(detail)) {
