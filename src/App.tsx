@@ -445,12 +445,12 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
       <section className="detail-section">
         <h3>子任务 <span>{completedSubtasks}/{task.subtasks.length}</span></h3>
         {task.subtasks.length ? task.subtasks.map((subtask) => (
-          <label className="check-line" key={subtask.id}><input type="checkbox" checked={subtask.completed} onChange={() => onSubtask(subtask.id)} /><span>{subtask.title}</span><small>{subtask.completed ? "已完成" : "待完成"}</small></label>
+          <label className={`check-line ${subtask.completed ? "is-completed" : ""}`} key={subtask.id}><input type="checkbox" checked={subtask.completed} onChange={() => onSubtask(subtask.id)} /><span>{subtask.title}</span></label>
         )) : <p className="empty-detail">暂无子任务</p>}
       </section>
       <section className="detail-section acceptance">
         <h3>验收标准</h3>
-        {task.acceptanceCriteria.length ? task.acceptanceCriteria.map((criterion) => <label className="check-line" key={criterion.id}><input type="checkbox" checked={criterion.completed} onChange={() => onAcceptanceCriterion(criterion.id)} /><span>{criterion.title}</span></label>) : <p className="empty-detail">尚未设置验收标准</p>}
+        {task.acceptanceCriteria.length ? task.acceptanceCriteria.map((criterion) => <label className={`check-line ${criterion.completed ? "is-completed" : ""}`} key={criterion.id}><input type="checkbox" checked={criterion.completed} onChange={() => onAcceptanceCriterion(criterion.id)} /><span>{criterion.title}</span></label>) : <p className="empty-detail">尚未设置验收标准</p>}
       </section>
       <section className="detail-section">
         <h3>依赖关系</h3>
