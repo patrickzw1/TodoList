@@ -6,7 +6,7 @@ import ts from "typescript";
 import { boundedActivity, taskWithUserActivity } from "../src/task-activity.ts";
 import { validateWorkspaceCompletion } from "../src/task-validation.ts";
 import { importedWorkspaceForSave } from "../src/workspace-backup.ts";
-import { checklistEditsOnLatest } from "../src/task-checklists.ts";
+import { checklistEditorEdit, checklistEditsOnLatest } from "../src/task-checklists.ts";
 
 function fixture(version = 10) {
   return { version, projects: [{ id: "p", name: "P", color: "#fff" }], tasks: [{
@@ -220,7 +220,11 @@ test("an editor retry preserves latest checkbox state instead of re-confirming a
     { id: "a", title: "A", completed: true }, { id: "b", title: "B", completed: true },
   ];
   const hook = await run.mount();
-  const edits = { status: "done", acceptanceCriteria: [...hook.workspace.tasks[0].acceptanceCriteria].reverse() };
+  const acceptanceCriteria = checklistEditorEdit(hook.workspace.tasks[0].acceptanceCriteria, hook.workspace.tasks[0].acceptanceCriteria.map((item) => ({
+    id: item.id,
+    title: item.id === "a" ? "A renamed" : item.title,
+  })));
+  const edits = { status: "done", acceptanceCriteria };
   hook.commit((current) => ({ ...current, version: current.version + 1,
     tasks: current.tasks.map((task) => taskWithUserActivity(task, "编辑任务", checklistEditsOnLatest(task, edits))),
   }));

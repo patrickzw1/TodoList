@@ -191,7 +191,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .check-line > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .check-line.is-completed > span { color: #9399a1; text-decoration: line-through; }
 .dependency small { color: #8a9098; font-size: 10px; }
-.dependency { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; min-height: 34px; font-size: 12px; }
+.dependency { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; min-height: 34px; font-size: 12px; }
+.dependency > span { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .dependency.completed svg { color: var(--green); }
 .dependency.pending svg { color: #9aa1aa; }
 .empty-detail { margin: 0; color: #9399a1; font-size: 12px; }
@@ -470,8 +471,34 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .task-editor-dialog textarea::placeholder { color: #9aa2ad; font-weight: 400; }
 .task-editor-dialog select, .task-editor-dialog input[type="date"] { cursor: pointer; }
 .editor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
-.editor-grid.text-lists { align-items: start; }
-.editor-grid.text-lists textarea { min-height: 116px; }
+.task-entry-sections { display: flex; flex-direction: column; gap: 18px; margin-bottom: 18px; }
+.task-entry-section { min-width: 0; padding-top: 2px; }
+.task-entry-section + .task-entry-section { padding-top: 18px; border-top: 1px solid #edf0f3; }
+.task-entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.task-entry-heading > div { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
+.task-entry-heading h3 { margin: 0; color: #59616c; font-size: 12px; font-weight: 650; }
+.task-entry-heading small { color: #969da7; font-size: 10px; font-weight: 500; }
+.task-entry-add,
+.task-entry-empty button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; height: 30px; padding: 0 9px; border: 1px solid #d7e1ef; border-radius: 7px; color: #2465c2; background: #f7faff; font-size: 11px; font-weight: 620; cursor: pointer; }
+.task-entry-add:hover,
+.task-entry-empty button:hover { border-color: #acc5e8; background: #eef5ff; }
+.task-entry-add:focus-visible,
+.task-entry-empty button:focus-visible,
+.task-entry-delete:focus-visible { outline: 2px solid #75a3ee; outline-offset: 2px; }
+.task-entry-add svg,
+.task-entry-empty button svg { width: 14px; height: 14px; }
+.task-entry-list { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.task-entry-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 32px; align-items: center; gap: 8px; min-width: 0; }
+.task-entry-number { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: #747d88; background: #f1f3f6; font-size: 10px; font-weight: 650; }
+.task-entry-field { min-width: 0; }
+.task-editor-dialog .task-entry-field textarea { display: block; width: 100%; min-height: 72px; resize: vertical; overflow-wrap: anywhere; white-space: pre-wrap; }
+.task-entry-row.is-invalid textarea { border-color: #d26a72; background: #fffafa; box-shadow: 0 0 0 3px rgba(190,61,72,.08); }
+.task-entry-error { margin: 5px 2px 0; color: #b33f49; font-size: 10px; font-weight: 520; line-height: 1.4; }
+.task-entry-delete { display: grid; place-items: center; align-self: center; width: 32px; min-width: 32px; max-width: 32px; height: 32px; min-height: 32px; max-height: 32px; padding: 0; border: 1px solid transparent; border-radius: 7px; color: #89919c; background: transparent; cursor: pointer; }
+.task-entry-delete:hover { border-color: #f0d3d6; color: #b53e47; background: #fff4f5; }
+.task-entry-delete svg { width: 15px; height: 15px; }
+.task-entry-empty { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 54px; padding: 9px 10px 9px 12px; border: 1px dashed #d8dee6; border-radius: 8px; color: #9299a3; background: #fafbfd; font-size: 11px; }
+.task-entry-helper { margin: 8px 2px 0; color: #8b929c; font-size: 10px; line-height: 1.5; }
 .task-editor-dialog .dialog-actions {
   flex: 0 0 auto;
   min-height: 68px;

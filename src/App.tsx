@@ -741,7 +741,7 @@ function MainApp() {
     const task = workspace.tasks.find((item) => item.id === taskId);
     if (!task) return;
     try {
-      validateTaskCompletion(task, { ...task, ...edits });
+      validateTaskCompletion(task, { ...task, ...checklistEditsOnLatest(task, edits) });
     } catch {
       selectTask(taskId);
       setCompletionNoticeTaskId(taskId);

@@ -1,35 +1,70 @@
 import type { AcceptanceCriterion, Subtask, Task } from "./types";
 
-// Textarea lines have no stable IDs. Only unchanged titles can safely retain state;
-// a renamed line is new, and duplicate titles consume old entries once, in order.
-function reconcileChecklist(existing: Subtask[], titles: string[]) {
-  const used = new Set<number>();
-  return titles.map((title) => {
-    const match = existing.findIndex((item, index) => !used.has(index) && item.title === title);
-    if (match < 0) return { id: crypto.randomUUID(), title, completed: false };
-    used.add(match);
-    return { ...existing[match] };
+type ChecklistItem = Subtask | AcceptanceCriterion;
+
+export interface ChecklistDraftItem {
+  id: string;
+  title: string;
+}
+
+export interface ChecklistEditorEdit {
+  deletedIds: string[];
+  titleEdits: Array<Pick<ChecklistItem, "id" | "title">>;
+  additions: ChecklistItem[];
+}
+
+export interface TaskChecklistEdits {
+  subtasks?: ChecklistEditorEdit;
+  acceptanceCriteria?: ChecklistEditorEdit;
+}
+
+export type TaskEditorPatch = Omit<Partial<Task>, "subtasks" | "acceptanceCriteria"> & TaskChecklistEdits;
+
+export function checklistEditorEdit(existing: ChecklistItem[], draft: ChecklistDraftItem[]) {
+  const existingById = new Map(existing.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const normalizedDraft = draft.flatMap((item) => {
+    if (seen.has(item.id)) throw new Error(`duplicate checklist item id: ${item.id}`);
+    seen.add(item.id);
+    const title = item.title.trim();
+    if (!title && existingById.has(item.id)) throw new Error(`existing checklist item is empty: ${item.id}`);
+    return title ? [{ id: item.id, title }] : [];
   });
+  const presentIds = new Set(normalizedDraft.map((item) => item.id));
+  const deletedIds = existing.filter((item) => !presentIds.has(item.id)).map((item) => item.id);
+  const titleEdits = normalizedDraft.filter((item) => {
+    const current = existingById.get(item.id);
+    return current && current.title !== item.title;
+  });
+  const additions = normalizedDraft
+    .filter((item) => !existingById.has(item.id))
+    .map((item) => ({ ...item, completed: false }));
+
+  if (!deletedIds.length && !titleEdits.length && !additions.length) return undefined;
+  return { deletedIds, titleEdits, additions } satisfies ChecklistEditorEdit;
 }
 
-export function reconcileSubtasks(existing: Subtask[], titles: string[]) {
-  return reconcileChecklist(existing, titles);
+export function applyChecklistEditorEdit(latest: ChecklistItem[], edit: ChecklistEditorEdit) {
+  const deleted = new Set(edit.deletedIds);
+  const titles = new Map(edit.titleEdits.map((item) => [item.id, item.title]));
+  const result = latest
+    .filter((item) => !deleted.has(item.id))
+    .map((item) => titles.has(item.id) ? { ...item, title: titles.get(item.id)! } : item);
+  const retainedIds = new Set(result.map((item) => item.id));
+  for (const addition of edit.additions) {
+    if (!retainedIds.has(addition.id)) {
+      result.push({ ...addition });
+      retainedIds.add(addition.id);
+    }
+  }
+  return result;
 }
 
-export function reconcileAcceptanceCriteria(existing: AcceptanceCriterion[], titles: string[]) {
-  return reconcileChecklist(existing, titles);
-}
-
-export function checklistEditsOnLatest(task: Task, edits: Partial<Task>): Partial<Task> {
-  const applyTitles = (latest: Subtask[], edited: Subtask[]) => edited.map((item) => ({
-    ...item,
-    // The editor changes text and order, never checkbox state. Preserve changes
-    // made in the detail panel or by MCP while this save was in flight.
-    completed: latest.find((current) => current.id === item.id && current.title === item.title)?.completed ?? false,
-  }));
+export function checklistEditsOnLatest(task: Task, edits: TaskEditorPatch): Partial<Task> {
+  const { subtasks, acceptanceCriteria, ...taskEdits } = edits;
   return {
-    ...edits,
-    ...(edits.subtasks ? { subtasks: applyTitles(task.subtasks, edits.subtasks) } : {}),
-    ...(edits.acceptanceCriteria ? { acceptanceCriteria: applyTitles(task.acceptanceCriteria, edits.acceptanceCriteria) } : {}),
+    ...taskEdits,
+    ...(subtasks ? { subtasks: applyChecklistEditorEdit(task.subtasks, subtasks) } : {}),
+    ...(acceptanceCriteria ? { acceptanceCriteria: applyChecklistEditorEdit(task.acceptanceCriteria, acceptanceCriteria) } : {}),
   };
 }

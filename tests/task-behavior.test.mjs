@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, formatActivityTime, taskWithUserActivity } from "../src/task-activity.ts";
 import { resolveDefaultProjectId } from "../src/task-creation.ts";
 import { searchTasks, tasksForView } from "../src/task-filtering.ts";
-import { reconcileAcceptanceCriteria, reconcileSubtasks } from "../src/task-checklists.ts";
+import { applyChecklistEditorEdit, checklistEditorEdit } from "../src/task-checklists.ts";
 import { isDueDateOnOrBefore, normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "../src/date-utils.ts";
 import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "../src/project-colors.ts";
 
@@ -27,26 +27,61 @@ test("project colors keep presets, include named bright red, and normalize suppo
   assert.equal(isPresetProjectColor("#aabbcc"), false);
 });
 
-for (const reconcile of [reconcileAcceptanceCriteria, reconcileSubtasks]) {
-  test(`${reconcile.name} preserves identity through insertion, deletion and reordering`, () => {
-    const original = [{ id: "a", title: "A", completed: true }, { id: "b", title: "B", completed: false }];
-    const inserted = reconcile(original, ["New", "A", "B"]);
-    assert.equal(inserted[0].completed, false);
-    assert.ok(!["a", "b"].includes(inserted[0].id));
-    assert.deepEqual(inserted.slice(1), original);
-    assert.deepEqual(reconcile(original, ["B", "A"]), [original[1], original[0]]);
-    assert.deepEqual(reconcile(original, ["B"]), [original[1]]);
-    assert.deepEqual(reconcile(original, []), []);
-    assert.equal(reconcile(original, ["Renamed", "B"])[0].completed, false);
+test("checklist editor edits preserve stable IDs and replay only explicit item changes", () => {
+  const original = [{ id: "a", title: "A", completed: true }, { id: "b", title: "B", completed: false }];
+  const edit = checklistEditorEdit(original, [
+    { id: "a", title: " A renamed\nwith detail " },
+    { id: "new", title: "New\nitem" },
+  ]);
+  assert.deepEqual(edit, {
+    deletedIds: ["b"],
+    titleEdits: [{ id: "a", title: "A renamed\nwith detail" }],
+    additions: [{ id: "new", title: "New\nitem", completed: false }],
   });
-  test(`${reconcile.name} consumes duplicate titles only once and defaults additional lines to pending`, () => {
-    const original = [{ id: "a1", title: "A", completed: true }, { id: "a2", title: "A", completed: false }];
-    const result = reconcile(original, ["A", "New", "A", "A"]);
-    assert.deepEqual([result[0], result[2]], original);
-    assert.equal(result[3].completed, false);
-    assert.equal(new Set(result.map((item) => item.id)).size, 4);
-  });
-}
+
+  const latest = [
+    { id: "a", title: "A changed elsewhere", completed: false },
+    { id: "b", title: "B", completed: true },
+    { id: "concurrent", title: "Added concurrently", completed: true },
+  ];
+  assert.deepEqual(applyChecklistEditorEdit(latest, edit), [
+    { id: "a", title: "A renamed\nwith detail", completed: false },
+    { id: "concurrent", title: "Added concurrently", completed: true },
+    { id: "new", title: "New\nitem", completed: false },
+  ]);
+});
+
+test("checklist conflict replay does not revive concurrent deletions or overwrite untouched items", () => {
+  const original = [{ id: "a", title: "A", completed: false }, { id: "b", title: "B", completed: false }];
+  const edit = checklistEditorEdit(original, [
+    { id: "a", title: "A renamed" },
+    { id: "b", title: "B" },
+    { id: "new", title: "New" },
+  ]);
+  const latest = [{ id: "b", title: "B changed concurrently", completed: true }];
+  assert.deepEqual(applyChecklistEditorEdit(latest, edit), [
+    { id: "b", title: "B changed concurrently", completed: true },
+    { id: "new", title: "New", completed: false },
+  ]);
+});
+
+test("checklist drafts ignore blank new items but reject blank persisted items", () => {
+  const original = [{ id: "a", title: "A", completed: true }];
+  assert.equal(checklistEditorEdit(original, [{ id: "a", title: "A" }, { id: "new", title: " \n " }]), undefined);
+  assert.throws(() => checklistEditorEdit(original, [{ id: "a", title: " " }]), /empty/);
+  assert.throws(() => checklistEditorEdit(original, [{ id: "a", title: "A" }, { id: "a", title: "again" }]), /duplicate/);
+});
+
+test("task editor uses item-by-item multiline sections and fixed centered delete controls", () => {
+  const dialogs = readFileSync(new URL("../src/dialogs.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.equal((dialogs.match(/<TaskEntryEditor sectionId=/g) ?? []).length, 3);
+  assert.match(dialogs, /window\.requestAnimationFrame\(\(\) => document\.getElementById\(taskEntryControlId\(sectionId, id\)\)\?\.focus\(\)\)/);
+  assert.doesNotMatch(dialogs, /每行一个|每行一项/);
+  assert.match(styles, /\.task-entry-row \{[^}]*grid-template-columns: 22px minmax\(0, 1fr\) 32px;[^}]*align-items: center;/);
+  assert.match(styles, /\.task-entry-delete \{[^}]*align-self: center;[^}]*width: 32px;[^}]*height: 32px;/);
+  assert.match(styles, /\.dependency > span \{[^}]*overflow-wrap: anywhere;[^}]*white-space: pre-wrap;/);
+});
 
 test("task actions enforce acceptance on latest data and allow unrelated legacy edits", () => {
   const pending = { ...makeTask(), acceptanceCriteria: [{ id: "a", title: "Verify", completed: false }] };

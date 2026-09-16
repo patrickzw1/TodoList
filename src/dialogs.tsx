@@ -1,12 +1,12 @@
-import { Plus, X } from "@phosphor-icons/react";
+import { Plus, Trash, X } from "@phosphor-icons/react";
 import { FormEvent, type ComponentProps, useEffect, useId, useMemo, useState } from "react";
-import type { AcceptanceCriterion, Priority, Project, Subtask, Task, TaskStatus } from "./types";
+import type { Priority, Project, Task, TaskStatus } from "./types";
 import { normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "./date-utils.ts";
 import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "./project-colors.ts";
 import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
-import { reconcileAcceptanceCriteria, reconcileSubtasks } from "./task-checklists";
+import { checklistEditorEdit, type TaskChecklistEdits } from "./task-checklists";
 
-export interface TaskEdits {
+export type TaskEdits = {
   title: string;
   description: string;
   projectId: string;
@@ -15,14 +15,8 @@ export interface TaskEdits {
   dueDate: string;
   dueLabel: string;
   tags: string[];
-  subtasks?: Subtask[];
-  acceptanceCriteria?: AcceptanceCriterion[];
   dependencies: string[];
-}
-
-function splitLines(value: string) {
-  return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
-}
+} & TaskChecklistEdits;
 
 function splitTags(value: string) {
   return [...new Set(value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean))];
@@ -33,12 +27,82 @@ function AutoHideTextarea({ className = "", ...props }: ComponentProps<"textarea
   return <textarea className={`auto-hide-scrollbar ${className}`.trim()} {...props} {...scrollbar} />;
 }
 
+interface TaskEntryDraft {
+  id: string;
+  value: string;
+  existing: boolean;
+}
+
+function taskEntryControlId(sectionId: string, itemId: string) {
+  return `${sectionId}-${itemId}`;
+}
+
+function TaskEntryEditor({ sectionId, label, addLabel, emptyLabel, placeholder, helper, items, invalidIds, onChange, onResolveInvalid }: {
+  sectionId: string;
+  label: string;
+  addLabel: string;
+  emptyLabel: string;
+  placeholder: string;
+  helper?: string;
+  items: TaskEntryDraft[];
+  invalidIds: Set<string>;
+  onChange: (items: TaskEntryDraft[]) => void;
+  onResolveInvalid: (controlId: string) => void;
+}) {
+  const headingId = `${sectionId}-heading`;
+  const addItem = () => {
+    const id = crypto.randomUUID();
+    onChange([...items, { id, value: "", existing: false }]);
+    window.requestAnimationFrame(() => document.getElementById(taskEntryControlId(sectionId, id))?.focus());
+  };
+  const removeItem = (id: string) => {
+    const controlId = taskEntryControlId(sectionId, id);
+    onResolveInvalid(controlId);
+    onChange(items.filter((item) => item.id !== id));
+  };
+
+  return <section className="task-entry-section" aria-labelledby={headingId}>
+    <div className="task-entry-heading">
+      <div><h3 id={headingId}>{label}</h3><small>{items.length} 项</small></div>
+      <button type="button" className="task-entry-add" onClick={addItem}><Plus aria-hidden="true" />{addLabel}</button>
+    </div>
+    {items.length ? <div className="task-entry-list">
+      {items.map((item, index) => {
+        const controlId = taskEntryControlId(sectionId, item.id);
+        const errorId = `${controlId}-error`;
+        const invalid = invalidIds.has(controlId);
+        return <div className={`task-entry-row${invalid ? " is-invalid" : ""}`} key={item.id}>
+          <span className="task-entry-number" aria-hidden="true">{index + 1}</span>
+          <div className="task-entry-field">
+            <AutoHideTextarea
+              id={controlId}
+              rows={2}
+              value={item.value}
+              onChange={(event) => {
+                onResolveInvalid(controlId);
+                onChange(items.map((current) => current.id === item.id ? { ...current, value: event.target.value } : current));
+              }}
+              placeholder={placeholder}
+              aria-label={`${label} ${index + 1}`}
+              aria-invalid={invalid || undefined}
+              aria-describedby={invalid ? errorId : undefined}
+            />
+            {invalid && <p className="task-entry-error" id={errorId} role="alert">内容不能为空，请填写或明确删除这一项。</p>}
+          </div>
+          <button type="button" className="task-entry-delete" onClick={() => removeItem(item.id)} aria-label={`删除${label} ${index + 1}`} title={`删除${label} ${index + 1}`}><Trash aria-hidden="true" /></button>
+        </div>;
+      })}
+    </div> : <div className="task-entry-empty"><span>{emptyLabel}</span><button type="button" onClick={addItem}><Plus aria-hidden="true" />添加第一项</button></div>}
+    {helper && <p className="task-entry-helper">{helper}</p>}
+  </section>;
+}
+
 export function TaskEditorDialog({ task, projects, onClose, onSave }: {
   task: Task; projects: Project[]; onClose: () => void; onSave: (edits: TaskEdits) => void;
 }) {
   const [initialChecklists] = useState(() => ({
-    subtasks: task.subtasks.map((item) => item.title).join("\n"),
-    acceptanceCriteria: task.acceptanceCriteria.map((item) => item.title).join("\n"),
+    subtasks: task.subtasks.map((item) => ({ ...item })),
+    acceptanceCriteria: task.acceptanceCriteria.map((item) => ({ ...item })),
   }));
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -47,15 +111,43 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [dueDate, setDueDate] = useState(task.dueDate === UNSCHEDULED_DUE_DATE ? "" : task.dueDate);
   const [tags, setTags] = useState(task.tags.join("，"));
-  const [subtasks, setSubtasks] = useState(task.subtasks.map((item) => item.title).join("\n"));
-  const [acceptanceCriteria, setAcceptanceCriteria] = useState(task.acceptanceCriteria.map((item) => item.title).join("\n"));
-  const [dependencies, setDependencies] = useState(task.dependencies.join("\n"));
+  const [subtasks, setSubtasks] = useState<TaskEntryDraft[]>(() => task.subtasks.map((item) => ({ id: item.id, value: item.title, existing: true })));
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState<TaskEntryDraft[]>(() => task.acceptanceCriteria.map((item) => ({ id: item.id, value: item.title, existing: true })));
+  const [dependencies, setDependencies] = useState<TaskEntryDraft[]>(() => task.dependencies.map((value) => ({ id: crypto.randomUUID(), value, existing: true })));
+  const [invalidEntryIds, setInvalidEntryIds] = useState<Set<string>>(() => new Set());
   const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
+
+  const resolveInvalidEntry = (controlId: string) => setInvalidEntryIds((current) => {
+    if (!current.has(controlId)) return current;
+    const next = new Set(current);
+    next.delete(controlId);
+    return next;
+  });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
+    const sections = [
+      { id: "task-subtasks", items: subtasks, setItems: setSubtasks },
+      { id: "task-acceptance", items: acceptanceCriteria, setItems: setAcceptanceCriteria },
+      { id: "task-dependencies", items: dependencies, setItems: setDependencies },
+    ];
+    const invalidIds = new Set(sections.flatMap((section) => section.items
+      .filter((item) => item.existing && !item.value.trim())
+      .map((item) => taskEntryControlId(section.id, item.id))));
+    for (const section of sections) section.setItems(section.items.filter((item) => item.existing || item.value.trim()));
+    setInvalidEntryIds(invalidIds);
+    if (invalidIds.size) {
+      const [firstInvalid] = invalidIds;
+      window.requestAnimationFrame(() => document.getElementById(firstInvalid)?.focus());
+      return;
+    }
+    const normalizedSubtasks = subtasks.filter((item) => item.existing || item.value.trim());
+    const normalizedAcceptance = acceptanceCriteria.filter((item) => item.existing || item.value.trim());
+    const normalizedDependencies = dependencies.filter((item) => item.existing || item.value.trim());
+    const subtaskEdits = checklistEditorEdit(initialChecklists.subtasks, normalizedSubtasks.map((item) => ({ id: item.id, title: item.value })));
+    const acceptanceEdits = checklistEditorEdit(initialChecklists.acceptanceCriteria, normalizedAcceptance.map((item) => ({ id: item.id, title: item.value })));
     const resolvedDueDate = normalizeOptionalDueDate(dueDate);
     onSave({
       title: trimmedTitle,
@@ -66,9 +158,9 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
       dueDate: resolvedDueDate,
       dueLabel: resolvedDueDate === UNSCHEDULED_DUE_DATE ? "未安排" : resolvedDueDate,
       tags: splitTags(tags),
-      ...(subtasks !== initialChecklists.subtasks ? { subtasks: reconcileSubtasks(task.subtasks, splitLines(subtasks)) } : {}),
-      ...(acceptanceCriteria !== initialChecklists.acceptanceCriteria ? { acceptanceCriteria: reconcileAcceptanceCriteria(task.acceptanceCriteria, splitLines(acceptanceCriteria)) } : {}),
-      dependencies: splitLines(dependencies),
+      ...(subtaskEdits ? { subtasks: subtaskEdits } : {}),
+      ...(acceptanceEdits ? { acceptanceCriteria: acceptanceEdits } : {}),
+      dependencies: normalizedDependencies.map((item) => item.value.trim()),
     });
   };
 
@@ -86,11 +178,11 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
             <label>截止日期<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
           </div>
           <label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="使用逗号分隔" /></label>
-          <div className="editor-grid text-lists">
-            <label>子任务<AutoHideTextarea rows={5} value={subtasks} onChange={(event) => setSubtasks(event.target.value)} placeholder="每行一个子任务" /></label>
-            <label>验收标准<AutoHideTextarea rows={5} value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} placeholder="每行一项验收标准" /></label>
+          <div className="task-entry-sections">
+            <TaskEntryEditor sectionId="task-subtasks" label="子任务" addLabel="添加子任务" emptyLabel="还没有子任务" placeholder="填写一项子任务；Enter 仅换行" items={subtasks} invalidIds={invalidEntryIds} onChange={setSubtasks} onResolveInvalid={resolveInvalidEntry} />
+            <TaskEntryEditor sectionId="task-acceptance" label="验收标准" addLabel="添加验收标准" emptyLabel="尚未设置验收标准" placeholder="填写一项验收标准；Enter 仅换行" items={acceptanceCriteria} invalidIds={invalidEntryIds} onChange={setAcceptanceCriteria} onResolveInvalid={resolveInvalidEntry} />
+            <TaskEntryEditor sectionId="task-dependencies" label="依赖关系" addLabel="添加依赖" emptyLabel="没有阻塞依赖" placeholder="填写一个依赖；Enter 仅换行" helper="与现有任务标题完全一致时显示其完成状态，否则作为外部依赖保存。" items={dependencies} invalidIds={invalidEntryIds} onChange={setDependencies} onResolveInvalid={resolveInvalidEntry} />
           </div>
-          <label>依赖关系<AutoHideTextarea rows={3} value={dependencies} onChange={(event) => setDependencies(event.target.value)} placeholder="每行一个依赖" /></label>
         </div>
         <div className="dialog-actions"><button type="button" onClick={onClose}>取消</button><button className="dialog-primary" type="submit" disabled={!title.trim()}>保存修改</button></div>
       </form>
