@@ -4,7 +4,92 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { syncVersion } from "../scripts/sync-version.mjs";
 import { verifyRelease } from "../scripts/verify-release.mjs";
+
+test("version sync changes only owned version fields and preserves registry packages", async () => {
+  const root = await mkdtemp(join(tmpdir(), "todolist-version-sync-"));
+  const currentVersion = "0.2.12";
+  const nextVersion = "0.2.13";
+  const cargoPackages = [
+    ["src-tauri/Cargo.toml", "todolist-desktop"],
+    ["crates/task-core/Cargo.toml", "task-core"],
+    ["crates/task-store-sqlite/Cargo.toml", "task-store-sqlite"],
+    ["crates/todolist-mcp/Cargo.toml", "todolist-mcp"],
+  ];
+  try {
+    await mkdir(join(root, "src-tauri"), { recursive: true });
+    await mkdir(join(root, "crates/task-core"), { recursive: true });
+    await mkdir(join(root, "crates/task-store-sqlite"), { recursive: true });
+    await mkdir(join(root, "crates/todolist-mcp/src"), { recursive: true });
+    await writeFile(join(root, "package.json"), `${JSON.stringify({ name: "todolist", version: currentVersion }, null, 2)}\n`);
+    await writeFile(join(root, "package-lock.json"), `${JSON.stringify({
+      name: "todolist",
+      version: currentVersion,
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "todolist", version: currentVersion, dependencies: { tinyglobby: "^0.2.12" } },
+        "node_modules/tinyglobby": { version: "0.2.12" },
+      },
+    }, null, 2)}\n`);
+    await writeFile(join(root, "src-tauri/tauri.conf.json"), `${JSON.stringify({ productName: "TodoList", version: currentVersion }, null, 2)}\n`);
+    for (const [path, name] of cargoPackages) {
+      await writeFile(join(root, path), `[package]\nname = "${name}"\nversion = "${currentVersion}"\n\n[dependencies]\n`);
+    }
+    const cargoLock = `version = 4
+
+[[package]]
+name = "task-core"
+version = "0.2.12"
+
+[[package]]
+name = "task-store-sqlite"
+version = "0.2.12"
+
+[[package]]
+name = "todolist-desktop"
+version = "0.2.12"
+
+[[package]]
+name = "todolist-mcp"
+version = "0.2.12"
+
+[[package]]
+name = "wasip2"
+version = "1.0.4+wasi-0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+
+[[package]]
+name = "wasm-bindgen"
+version = "0.2.127"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
+`;
+    await writeFile(join(root, "Cargo.lock"), cargoLock);
+    await writeFile(join(root, "crates/todolist-mcp/src/lib.rs"), `#[tool_handler(\n    name = "todolist",\n    version = "${currentVersion}",\n    instructions = "fixture"\n)]\nimpl ServerHandler for TodoMcpServer {}\n`);
+
+    const result = await syncVersion({ root, version: nextVersion });
+    assert.equal(result.changedFiles.length, 9);
+    assert.equal(JSON.parse(await readFile(join(root, "package.json"), "utf8")).version, nextVersion);
+    const packageLock = JSON.parse(await readFile(join(root, "package-lock.json"), "utf8"));
+    assert.equal(packageLock.version, nextVersion);
+    assert.equal(packageLock.packages[""].version, nextVersion);
+    assert.equal(packageLock.packages[""].dependencies.tinyglobby, "^0.2.12");
+    assert.equal(packageLock.packages["node_modules/tinyglobby"].version, "0.2.12");
+    const updatedCargoLock = await readFile(join(root, "Cargo.lock"), "utf8");
+    for (const [, name] of cargoPackages) {
+      assert.match(updatedCargoLock, new RegExp(`name = "${name}"\\nversion = "${nextVersion.replaceAll(".", "\\.")}"`));
+    }
+    assert.match(updatedCargoLock, /name = "wasip2"\nversion = "1\.0\.4\+wasi-0\.2\.12"/);
+    assert.match(updatedCargoLock, /name = "wasm-bindgen"\nversion = "0\.2\.127"/);
+    assert.doesNotMatch(updatedCargoLock, /0\.2\.137|wasi-0\.2\.13/);
+    assert.match(await readFile(join(root, "crates/todolist-mcp/src/lib.rs"), "utf8"), /version = "0\.2\.13"/);
+    await assert.rejects(syncVersion({ root, version: "0.2" }), /stable MAJOR\.MINOR\.PATCH/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 function updaterFixture(content) {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");

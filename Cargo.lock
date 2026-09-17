@@ -3595,7 +3595,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "task-core"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "serde",
  "serde_json",
@@ -3603,7 +3603,7 @@ dependencies = [
 
 [[package]]
 name = "task-store-sqlite"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4049,7 +4049,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "todolist-desktop"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "base64 0.22.1",
  "dirs",
@@ -4073,7 +4073,7 @@ dependencies = [
 
 [[package]]
 name = "todolist-mcp"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4552,7 +4552,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasip2"
-version = "1.0.4+wasi-0.2.13"
+version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
@@ -4561,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.137"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
 dependencies = [
@@ -4584,7 +4584,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.137"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77775f8f3f7217702089053b94958f8f54061a3f663417df76e19cbdcca29bc1"
 dependencies = [
@@ -4594,7 +4594,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.137"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e11d33f857dc2fb11b8bc75aee111aa9cbeb12cd9f25efd3d4c2a3dd4e235284"
 dependencies = [
@@ -4607,7 +4607,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.137"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
 dependencies = [

@@ -1,6 +1,6 @@
 {
   "name": "todolist",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "dev:desktop": "node scripts/desktop.mjs dev",
     "build:sidecar": "node scripts/prepare-mcp-sidecar.mjs",
     "build:desktop": "node scripts/desktop.mjs build",
+    "sync:version": "node scripts/sync-version.mjs",
     "preview": "vite preview",
     "test:mcp-stdio": "node scripts/mcp-stdio-smoke.mjs",
     "test:release-automation": "node tests/release-automation.test.mjs",
