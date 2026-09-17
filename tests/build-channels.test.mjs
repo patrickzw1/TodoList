@@ -37,6 +37,8 @@ test("development and production packaging select matching application and sidec
   assert.doesNotMatch(projectConfig, /\[mcp_servers\.todolist\]/);
   assert.match(projectConfig, /"reorder_tasks"/);
   assert.match(projectConfig, /"get_task_activity"/);
+  assert.match(projectConfig, /"add_task_attachment"/);
+  assert.match(projectConfig, /"add_task_image"/);
   assert.match(viteConfig, /readFileSync\(new URL\("\.\/package\.json"/);
   assert.match(viteConfig, /__APP_VERSION__/);
   assert.equal(packageJson.version, development.version);

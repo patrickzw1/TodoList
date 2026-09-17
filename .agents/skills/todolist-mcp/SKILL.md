@@ -1,6 +1,6 @@
 ---
 name: todolist-mcp
-description: Read, create, safely update, and reorder tasks in the local TodoList app through its MCP server. Use when the user asks to save a plan to TodoList, inspect TodoList progress, reorder a project, or synchronize task changes with TodoList.
+description: Read, create, safely update, reorder, and attach local files to tasks in the local TodoList app through its MCP server. Use when the user asks to save a plan to TodoList, inspect TodoList progress, attach a local file, reorder a project, or synchronize task changes with TodoList.
 ---
 
 # TodoList MCP
@@ -17,16 +17,19 @@ The `todolist` server is for daily tasks in the installed app. The TodoList sour
 4. Use `create_task` for new work. Keep titles concise and put detail in description, subtasks, dependencies, and acceptance criteria.
 5. For `create_project` and `create_task`, generate one stable, unique `request_id` for the logical operation and reuse that exact value only when retrying the same input. If the input changes, use a new value.
 6. Use `update_task` with the latest returned task `version` as `expected_version`.
-7. For `reorder_tasks`, read every page for exactly one project and archived state, preserve every stable task id exactly once, and pass the latest `workspaceVersion` as `expected_workspace_version`. For archived ordering, call `list_tasks` with `include_archived=true`, read all pages, then keep only results whose `archived` field is `true`; there is no archived-only server filter. Re-read the complete group after a workspace conflict; never infer omitted ids.
-8. Read the changed task or ordered group again when the result matters to the conversation.
+7. To attach a file already present on the MCP host, use `add_task_attachment` for ordinary files or `add_task_image` for supported images. Pass an absolute `source_path`, the latest task `version` as `expected_version`, and one stable unique `request_id`; reuse that id only to retry the identical task, version, path, and tool input.
+8. For `reorder_tasks`, read every page for exactly one project and archived state, preserve every stable task id exactly once, and pass the latest `workspaceVersion` as `expected_workspace_version`. For archived ordering, call `list_tasks` with `include_archived=true`, read all pages, then keep only results whose `archived` field is `true`; there is no archived-only server filter. Re-read the complete group after a workspace conflict; never infer omitted ids.
+9. Read the changed task or ordered group again when the result matters to the conversation.
 
 Acceptance criteria may be supplied as short strings when creating a task. When replacing criteria on an existing task, reuse the latest criterion `id`, `title`, and `completed` values for unchanged items so user confirmations are preserved. `list_tasks` excludes archived tasks unless `include_archived` is true, returns at most 50 tasks by default, and accepts a maximum `limit` of 100.
 
 ## Attachments and images
 
-Task details have separate `attachments` and `images` collections. `get_task` and `list_tasks` return metadata: `id`, `originalName`, `mediaType`, `size`, `storageKey`, and `addedAt`. These results do not include file content, and `storageKey` is an internal reference, not a source path to open or upload.
+Task details have separate `attachments` and `images` collections. `get_task`, `list_tasks`, `add_task_attachment`, and `add_task_image` return metadata: `id`, `originalName`, `mediaType`, `size`, `storageKey`, and `addedAt`. These results do not include file content, and `storageKey` is an internal reference, not a source path to open or upload.
 
-The user adds, removes, opens, and previews files in the desktop task-detail panel. The current MCP tools cannot upload, import, remove, or preview files. If asked to attach a file, explain this limit and direct the user to the desktop attachment or image section. Do not claim that writing a path or data URI in a task description attaches a file. Do not edit SQLite or the managed-file directory to bypass this limit.
+The two add tools copy an existing regular file from the local filesystem of the computer running the MCP server into the active TodoList channel's managed storage. They never modify or delete the source. They do not accept HTTP(S) URLs, data URIs, base64 payloads, directories, links, unsupported image types, or files over 100 MB. Do not claim that writing a path in a task description attaches a file, and do not edit SQLite or the managed-file directory directly.
+
+MCP still cannot remove, open, read, download, or preview attachment/image content. Those actions remain in the desktop task-detail panel. If the source file is not present on the MCP host, explain that it must first be made available there; do not invent a network upload flow.
 
 `update_task` automatically preserves existing attachments and images while updating supported task fields. Do not attempt to replace these collections through other fields.
 

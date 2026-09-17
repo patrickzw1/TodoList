@@ -1,6 +1,6 @@
 # Codex integration
 
-TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex eight tools:
+TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex ten tools:
 
 - `list_projects`
 - `create_project`
@@ -8,6 +8,8 @@ TodoList remains a standalone local app. The optional `todolist-mcp` STDIO serve
 - `get_task`
 - `get_task_activity`
 - `create_task`
+- `add_task_attachment`
+- `add_task_image`
 - `update_task`
 - `reorder_tasks`
 
@@ -35,7 +37,7 @@ command = "/absolute/path/to/todo/target/development/release/todolist-mcp"
 startup_timeout_sec = 10
 tool_timeout_sec = 15
 required = false
-enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "get_task_activity", "create_task", "update_task", "reorder_tasks"]
+enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "get_task_activity", "create_task", "add_task_attachment", "add_task_image", "update_task", "reorder_tasks"]
 default_tools_approval_mode = "writes"
 ```
 
@@ -49,11 +51,15 @@ For an older developer machine whose global `todolist` still points into this re
 
 ## Attachments and images
 
-Normal task results from `list_tasks`, `get_task`, `create_task`, and `update_task` omit `activity` while retaining the task version, checklist ids, dependencies, attachments, images, and every other task field. Use the read-only `get_task_activity` tool only when the user asks for history. It returns newest entries first, defaults to 10, accepts 1 through 50, and uses an opaque cursor bound to the task id and current task version. A task change makes an existing history cursor stale, so restart that history read without the cursor. The retained activity data remains stored on the task and bounded to the newest 100 entries.
+Normal task results from `list_tasks`, `get_task`, `create_task`, `update_task`, `add_task_attachment`, and `add_task_image` omit `activity` while retaining the task version, checklist ids, dependencies, attachments, images, and every other task field. Use the read-only `get_task_activity` tool only when the user asks for history. It returns newest entries first, defaults to 10, accepts 1 through 50, and uses an opaque cursor bound to the task id and current task version. A task change makes an existing history cursor stale, so restart that history read without the cursor. The retained activity data remains stored on the task and bounded to the newest 100 entries.
 
-Task details support separate attachments and image collections. `get_task` and `list_tasks` include their metadata (`id`, `originalName`, `mediaType`, `size`, `storageKey`, `addedAt`); they do not return file content. `update_task` and `reorder_tasks` preserve both collections automatically. Files are added, removed, opened, and previewed in the desktop task-detail panel. The eight MCP tools do not upload, import, remove, or preview files, and putting a path in a description does not attach it.
+Task details support separate attachments and image collections. `get_task` and `list_tasks` include their metadata (`id`, `originalName`, `mediaType`, `size`, `storageKey`, `addedAt`); they do not return file content. `update_task` and `reorder_tasks` preserve both collections automatically.
 
-After upgrading, use the installed app's Codex integration page to confirm and refresh the TodoList-managed integration if it shows an update is needed, then reconnect or restart Codex to reload the bundled MCP server and its capability descriptions. This explicit refresh updates the managed Skill and adds newly managed tools such as `get_task_activity` to a known complete older `todolist` tool list while preserving unrelated settings, user-restricted tool lists, and other MCP servers. The app does not silently rewrite the user's Codex configuration during an upgrade.
+`add_task_attachment` and `add_task_image` copy one existing regular file from an absolute path on the MCP server host into the active build channel's managed-files directory and associate it with the selected task. They require the latest task `expected_version` and a stable `request_id`; an identical retry returns the original file association without another copy. The source is never modified or deleted. These tools do not accept URLs, data URIs, base64 content, directories, links, unsupported image types, or files over 100 MB. Common document formats, including PDF, Word, Excel, PowerPoint, text, Markdown, ZIP, and supported image extensions, retain useful media-type metadata.
+
+MCP still has no remove, open, read, download, or preview tool for attachment/image content. Those actions remain in the desktop task-detail panel. Putting a path in a task description does not attach it, and `storageKey` is an internal managed reference rather than a source path.
+
+After upgrading, use the installed app's Codex integration page to confirm and refresh the TodoList-managed integration if it shows an update is needed, then reconnect or restart Codex to reload the bundled MCP server and its capability descriptions. This explicit refresh updates the managed Skill and adds newly managed tools such as `add_task_attachment` and `add_task_image` to a known complete older `todolist` tool list while preserving unrelated settings, user-restricted tool lists, and other MCP servers. The app does not silently rewrite the user's Codex configuration during an upgrade.
 
 ## Task safety
 
@@ -61,7 +67,7 @@ After upgrading, use the installed app's Codex integration page to confirm and r
 - `list_tasks` uses versioned opaque cursor pagination with a default page size of 50 and a maximum of 100. Any intervening workspace change makes an old cursor stale, so restart the filtered listing without that cursor.
 - `get_task_activity` reads one task's retained history newest-first, defaults to 10 entries and accepts 1 through 50. Its opaque cursor is bound to that task and task version; task updates and history truncation invalidate the cursor instead of silently duplicating or skipping entries.
 - `reorder_tasks` requires every stable task id in one project and archived-state group exactly once plus the latest workspace version. To order archived tasks, call `list_tasks` with `include_archived=true`, read every page, and filter the returned items to `archived=true` on the client because `list_tasks` has no archived-only filter. It changes only shared order and never changes task fields or task versions.
-- `create_project` and `create_task` accept a stable `request_id`. Retrying the same input returns the original item; reusing that key for different input is rejected. The small retry ledger is capped at 1,000 records.
+- `create_project`, `create_task`, `add_task_attachment`, and `add_task_image` use stable `request_id` values. Retrying the same input returns the original item; reusing that key for different input is rejected. File imports also require the latest task version, while an identical post-success retry is recognized before another copy is attempted. The small retry ledger is capped at 1,000 records.
 - After a conflict, Codex must re-read and preserve newer user edits.
 - Completed tasks are not reopened unless the user explicitly requests it.
 - MCP-created tasks are unpinned and never open the desktop note.

@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const tempDirectory = await mkdtemp(join(tmpdir(), "todolist-mcp-smoke-"));
 const databasePath = join(tempDirectory, "todolist.sqlite");
+const attachmentSource = join(tempDirectory, "smoke.pdf");
+const imageSource = join(tempDirectory, "smoke.png");
 const appVersion = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
 const executableName = process.platform === "win32" ? "todolist-mcp.exe" : "todolist-mcp";
 const executable = process.env.TODOLIST_MCP_EXECUTABLE || join(process.cwd(), "target", "development", "release", executableName);
@@ -31,6 +33,8 @@ database.exec("CREATE TABLE workspace_snapshot (id INTEGER PRIMARY KEY CHECK (id
 database.prepare("INSERT INTO workspace_snapshot (id, version, payload_json, updated_at) VALUES (1, ?, ?, ?)")
   .run(fixture.version, JSON.stringify(fixture), Math.floor(Date.now() / 1000));
 database.close();
+await writeFile(attachmentSource, "attachment source");
+await writeFile(imageSource, "image source");
 
 const child = spawn(executable, [], {
   cwd: process.cwd(),
@@ -100,7 +104,7 @@ try {
   });
   const initialized = await waitFor(1);
   if (initialized.error) throw new Error(JSON.stringify(initialized.error));
-  for (const capability of ["attachments", "images", "desktop UI", "no file upload"]) {
+  for (const capability of ["add_task_attachment", "add_task_image", "absolute source_path", "removal", "preview"]) {
     if (!initialized.result.instructions?.includes(capability)) throw new Error(`Missing MCP capability guidance: ${capability}`);
   }
 
@@ -110,7 +114,7 @@ try {
   if (listed.error) throw new Error(JSON.stringify(listed.error));
 
   const toolNames = listed.result.tools.map((tool) => tool.name).sort();
-  const expected = ["create_project", "create_task", "get_task", "get_task_activity", "list_projects", "list_tasks", "reorder_tasks", "update_task"];
+  const expected = ["add_task_attachment", "add_task_image", "create_project", "create_task", "get_task", "get_task_activity", "list_projects", "list_tasks", "reorder_tasks", "update_task"];
   if (JSON.stringify(toolNames) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected tools: ${toolNames.join(", ")}`);
   }
@@ -124,6 +128,8 @@ try {
     ["create_task", ["request_id", "project_id", "title"]],
     ["list_tasks", ["limit", "cursor"]],
     ["get_task_activity", ["task_id", "limit", "cursor"]],
+    ["add_task_attachment", ["task_id", "expected_version", "source_path", "request_id"]],
+    ["add_task_image", ["task_id", "expected_version", "source_path", "request_id"]],
     ["reorder_tasks", ["project_id", "archived", "expected_workspace_version", "task_ids"]],
   ]) {
     const properties = tools.get(toolName)?.inputSchema?.properties ?? {};
@@ -134,12 +140,37 @@ try {
     }
   }
 
+  const attached = toolJson(await callTool("add_task_attachment", {
+    task_id: "task-a", expected_version: 1, source_path: attachmentSource, request_id: "stdio-attachment",
+  }));
+  if (attached.replayed || attached.task.version !== 2 || attached.task.attachments.length !== 1 || "activity" in attached.task) {
+    throw new Error("Attachment import returned an invalid compact result");
+  }
+  const managedAttachment = join(tempDirectory, "managed-files", ...attached.file.storageKey.split("/"));
+  if ((await readFile(managedAttachment, "utf8")) !== "attachment source" || (await readFile(attachmentSource, "utf8")) !== "attachment source") {
+    throw new Error("Attachment copy or source preservation failed");
+  }
+  const attachmentReplay = toolJson(await callTool("add_task_attachment", {
+    task_id: "task-a", expected_version: 1, source_path: attachmentSource, request_id: "stdio-attachment",
+  }));
+  if (!attachmentReplay.replayed || attachmentReplay.file.id !== attached.file.id || attachmentReplay.task.attachments.length !== 1) {
+    throw new Error("Attachment retry was not idempotent");
+  }
+  const imaged = toolJson(await callTool("add_task_image", {
+    task_id: "task-a", expected_version: 2, source_path: imageSource, request_id: "stdio-image",
+  }));
+  if (imaged.task.version !== 3 || imaged.task.images.length !== 1) throw new Error("Image import failed");
+  const managedImage = join(tempDirectory, "managed-files", ...imaged.file.storageKey.split("/"));
+  if ((await readFile(managedImage, "utf8")) !== "image source" || (await readFile(imageSource, "utf8")) !== "image source") {
+    throw new Error("Image copy or source preservation failed");
+  }
+
   const firstPage = toolJson(await callTool("list_tasks", { project_id: "project-1", limit: 1 }));
   const initial = toolJson(await callTool("list_tasks", { project_id: "project-1" }));
   if (initial.tasks.map((item) => item.id).join(",") !== "task-a,task-b") throw new Error("Unexpected initial task order");
   if (initial.tasks.some((item) => "activity" in item)) throw new Error("Normal task output still contains activity");
   const history = toolJson(await callTool("get_task_activity", { task_id: "task-a", limit: 1 }));
-  if (history.activity[0]?.id !== "activity-new" || !history.nextCursor) throw new Error("Task history is not newest-first and paginated");
+  if (history.activity[0]?.actor !== "codex" || !history.nextCursor) throw new Error("Task history is not newest-first and paginated");
   const reordered = toolJson(await callTool("reorder_tasks", {
     project_id: "project-1", archived: false, expected_workspace_version: initial.workspaceVersion, task_ids: ["task-b", "task-a"],
   }));

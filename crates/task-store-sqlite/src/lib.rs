@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use task_core::Workspace;
+use task_core::{ActivityItem, ManagedFile, Workspace, MAX_SAFE_INTEGER};
 
 pub mod managed_files;
 pub mod storage_path;
@@ -17,6 +17,13 @@ pub struct SqliteTaskStore {
 pub struct IdempotentMutationResult {
     pub workspace: Workspace,
     pub entity_id: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug)]
+pub struct IdempotentFileImportResult {
+    pub workspace: Workspace,
+    pub file: ManagedFile,
     pub replayed: bool,
 }
 
@@ -183,6 +190,207 @@ impl SqliteTaskStore {
             return Err(error);
         }
         Ok(imported.expect("successful import has metadata"))
+    }
+
+    /// Import one local file and associate it with a task exactly once for a
+    /// stable MCP request id. The database write lock covers idempotency lookup,
+    /// source validation/copying, task mutation, and retry-ledger persistence.
+    pub fn import_task_file_idempotent(
+        &self,
+        operation: &str,
+        request_id: &str,
+        request_fingerprint: &str,
+        task_id: &str,
+        expected_version: u64,
+        source: &Path,
+        kind: &str,
+    ) -> Result<IdempotentFileImportResult, String> {
+        if !matches!(kind, "attachment" | "image") {
+            return Err("Managed file kind must be attachment or image".to_string());
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        let existing: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT request_fingerprint, entity_id
+                 FROM mcp_idempotency
+                 WHERE operation = ?1 AND request_id = ?2",
+                params![operation, request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+
+        if let Some((existing_fingerprint, file_id)) = existing {
+            if existing_fingerprint != request_fingerprint {
+                return Err(format!(
+                    "idempotency conflict: request_id '{request_id}' was already used for different {operation} input"
+                ));
+            }
+            let workspace = Self::load_from_connection(&transaction)?.ok_or_else(|| {
+                "TodoList workspace is not initialized; open the desktop app once before using MCP"
+                    .to_string()
+            })?;
+            let task = workspace
+                .tasks
+                .iter()
+                .find(|task| task.id == task_id)
+                .ok_or_else(|| {
+                    "The original task for this request no longer exists; use a new request_id"
+                        .to_string()
+                })?;
+            let files = if kind == "image" {
+                &task.images
+            } else {
+                &task.attachments
+            };
+            let file = files
+                .iter()
+                .find(|file| file.id == file_id)
+                .cloned()
+                .ok_or_else(|| {
+                    "The original imported file for this request is no longer attached; use a new request_id"
+                        .to_string()
+                })?;
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(IdempotentFileImportResult {
+                workspace,
+                file,
+                replayed: true,
+            });
+        }
+
+        let current = Self::load_from_connection(&transaction)?.ok_or_else(|| {
+            "TodoList workspace is not initialized; open the desktop app once before using MCP"
+                .to_string()
+        })?;
+        let current_task = current
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| format!("Task '{task_id}' was not found"))?;
+        if current_task.version != expected_version {
+            return Err(
+                serde_json::to_string(&serde_json::json!({
+                    "code": "version_conflict",
+                    "message": "The task changed after it was read. Read it again and preserve newer user edits.",
+                    "expectedVersion": expected_version,
+                    "currentVersion": current_task.version,
+                }))
+                .expect("serialize version conflict"),
+            );
+        }
+        let next_task_version = current_task
+            .version
+            .checked_add(1)
+            .filter(|version| *version <= MAX_SAFE_INTEGER)
+            .ok_or_else(|| "Task version limit reached; cannot import a file".to_string())?;
+        let next_workspace_version = current
+            .version
+            .checked_add(1)
+            .filter(|version| *version <= MAX_SAFE_INTEGER)
+            .ok_or_else(|| "Workspace version limit reached; cannot import a file".to_string())?;
+
+        let root = self.managed_files_root();
+        let file = managed_files::import_into_root(&root, source, kind)?;
+        let mut updated = current.clone();
+        let task = updated
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == task_id)
+            .expect("validated task remains in workspace");
+        if kind == "image" {
+            task.images.push(file.clone());
+        } else {
+            task.attachments.push(file.clone());
+        }
+        task.version = next_task_version;
+        task.push_activity(ActivityItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            actor: "codex".into(),
+            action: if kind == "image" {
+                "Codex 添加图片"
+            } else {
+                "Codex 添加附件"
+            }
+            .into(),
+            at: chrono::Utc::now().to_rfc3339(),
+        });
+        updated.version = next_workspace_version;
+
+        let result = (|| {
+            updated.trim_activity();
+            updated.validate()?;
+            updated.validate_completion_changes(&current)?;
+            Self::persist_transaction(&transaction, &updated, Some(&current))?;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_secs() as i64;
+            transaction
+                .execute(
+                    "INSERT INTO mcp_idempotency (
+                       operation, request_id, request_fingerprint, entity_id, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![operation, request_id, request_fingerprint, file.id, now],
+                )
+                .map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "DELETE FROM mcp_idempotency
+                     WHERE rowid IN (
+                       SELECT rowid FROM mcp_idempotency
+                       ORDER BY rowid DESC
+                       LIMIT -1 OFFSET ?1
+                     )",
+                    params![MAX_IDEMPOTENCY_RECORDS],
+                )
+                .map_err(|error| error.to_string())?;
+            transaction.commit().map_err(|error| error.to_string())?;
+            Ok::<_, String>(updated)
+        })();
+
+        match result {
+            Ok(workspace) => Ok(IdempotentFileImportResult {
+                workspace,
+                file,
+                replayed: false,
+            }),
+            Err(error) => {
+                // Delete only this attempt's random destination, and only after
+                // rechecking the latest committed snapshot under a write lock.
+                match self.remove_import_if_unreferenced(&file) {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(format!(
+                        "{error}; the failed import copy could not be cleaned up safely: {cleanup_error}"
+                    )),
+                }
+            }
+        }
+    }
+
+    fn remove_import_if_unreferenced(&self, file: &ManagedFile) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        let referenced = Self::load_from_connection(&transaction)?
+            .iter()
+            .flat_map(|workspace| &workspace.tasks)
+            .flat_map(|task| task.attachments.iter().chain(&task.images))
+            .any(|candidate| candidate.storage_key == file.storage_key);
+        if !referenced {
+            let path =
+                managed_files::resolve_storage_key(&self.managed_files_root(), &file.storage_key)?;
+            if let Err(error) = std::fs::remove_file(path) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(error.to_string());
+                }
+            }
+        }
+        transaction.commit().map_err(|error| error.to_string())
     }
 
     /// Only reclaim files removed by a committed change. Fresh imports/restores
@@ -737,6 +945,77 @@ mod tests {
         let _ = std::fs::remove_file(database_path.with_extension("sqlite-shm"));
         let _ = std::fs::remove_file(database_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(database_path);
+    }
+
+    #[test]
+    fn failed_idempotent_file_import_removes_only_its_unreferenced_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let database_path = root.path().join("channel/todolist.sqlite");
+        std::fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let store = SqliteTaskStore::open(&database_path).unwrap();
+        let source = root.path().join("source.pdf");
+        std::fs::write(&source, b"source stays").unwrap();
+        store
+            .save_workspace(&Workspace {
+                version: 1,
+                projects: vec![Project {
+                    id: "project-1".into(),
+                    name: "TodoList".into(),
+                    color: "#1264f4".into(),
+                }],
+                tasks: vec![Task {
+                    id: "task-1".into(),
+                    project_id: "project-1".into(),
+                    title: "Import".into(),
+                    description: String::new(),
+                    status: TaskStatus::Todo,
+                    priority: Priority::Medium,
+                    due_label: "未安排".into(),
+                    due_date: "9999-12-31".into(),
+                    tags: vec![],
+                    source: "test".into(),
+                    archived: false,
+                    pinned: false,
+                    version: 1,
+                    subtasks: vec![],
+                    acceptance_criteria: vec![],
+                    attachments: vec![],
+                    images: vec![],
+                    dependencies: vec![],
+                    activity: vec![],
+                }],
+            })
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute_batch("DROP TABLE task_version_clock")
+            .unwrap();
+
+        let error = store
+            .import_task_file_idempotent(
+                "add_task_attachment",
+                "forced-failure",
+                "fingerprint",
+                "task-1",
+                1,
+                &source,
+                "attachment",
+            )
+            .expect_err("missing version clock forces persistence failure");
+        assert!(error.contains("task_version_clock"));
+        assert_eq!(std::fs::read(&source).unwrap(), b"source stays");
+        let attachment_directory = store.managed_files_root().join("attachments");
+        assert!(
+            !attachment_directory.exists()
+                || std::fs::read_dir(&attachment_directory)
+                    .unwrap()
+                    .next()
+                    .is_none()
+        );
+        let workspace = store.load_workspace().unwrap().unwrap();
+        assert_eq!(workspace.version, 1);
+        assert!(workspace.tasks[0].attachments.is_empty());
     }
 
     #[test]

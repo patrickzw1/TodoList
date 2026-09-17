@@ -29,13 +29,25 @@ const LEGACY_MCP_TOOLS_V2: [&str; 7] = [
     "update_task",
     "reorder_tasks",
 ];
-const MCP_TOOLS: [&str; 8] = [
+const LEGACY_MCP_TOOLS_V3: [&str; 8] = [
     "list_projects",
     "create_project",
     "list_tasks",
     "get_task",
     "get_task_activity",
     "create_task",
+    "update_task",
+    "reorder_tasks",
+];
+const MCP_TOOLS: [&str; 10] = [
+    "list_projects",
+    "create_project",
+    "list_tasks",
+    "get_task",
+    "get_task_activity",
+    "create_task",
+    "add_task_attachment",
+    "add_task_image",
     "update_task",
     "reorder_tasks",
 ];
@@ -195,6 +207,7 @@ fn configured_tools_current(document: &DocumentMut) -> bool {
 fn configured_tools_legacy(document: &DocumentMut) -> bool {
     configured_tools_match(document, &LEGACY_MCP_TOOLS_V1)
         || configured_tools_match(document, &LEGACY_MCP_TOOLS_V2)
+        || configured_tools_match(document, &LEGACY_MCP_TOOLS_V3)
 }
 
 fn missing_managed_tools(document: &DocumentMut) -> Vec<&'static str> {
@@ -818,7 +831,7 @@ mod tests {
             updated.updated_items,
             vec![
                 "新版使用说明",
-                "工具列表（新增 get_task_activity、reorder_tasks）"
+                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image、reorder_tasks）"
             ]
         );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
@@ -827,6 +840,8 @@ mod tests {
         assert!(configured.contains("custom_setting = \"keep\""));
         assert!(configured.contains("\"reorder_tasks\""));
         assert!(configured.contains("\"get_task_activity\""));
+        assert!(configured.contains("\"add_task_attachment\""));
+        assert!(configured.contains("\"add_task_image\""));
         assert!(configured_tools_current(
             &configured.parse::<DocumentMut>().unwrap()
         ));
@@ -858,18 +873,75 @@ mod tests {
         assert_eq!(outdated.state, "update_available");
         assert_eq!(
             outdated.pending_updates,
-            vec!["新版使用说明", "工具列表（新增 get_task_activity）"]
+            vec![
+                "新版使用说明",
+                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image）"
+            ]
         );
 
         let updated = configure(&paths).unwrap();
         assert_eq!(updated.action_result, "updated");
         assert_eq!(
             updated.updated_items,
-            vec!["新版使用说明", "工具列表（新增 get_task_activity）"]
+            vec![
+                "新版使用说明",
+                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image）"
+            ]
         );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
         assert!(configured.contains("custom_setting = \"keep\""));
         assert_eq!(configured.matches("get_task_activity").count(), 1);
+        assert_eq!(configured.matches("add_task_attachment").count(), 1);
+        assert_eq!(configured.matches("add_task_image").count(), 1);
+        assert!(configured_tools_current(
+            &configured.parse::<DocumentMut>().unwrap()
+        ));
+    }
+
+    #[test]
+    fn refreshes_an_owned_eight_tool_config_with_local_file_import_tools() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+        fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+        install_skill(&paths).unwrap();
+        fs::write(
+            paths.skill_directory.join("SKILL.md"),
+            "old managed version",
+        )
+        .unwrap();
+        write_managed_command(&paths).unwrap();
+        fs::write(
+            &paths.codex_config,
+            format!(
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"list_projects\", \"create_project\", \"list_tasks\", \"get_task\", \"get_task_activity\", \"create_task\", \"update_task\", \"reorder_tasks\"]\ncustom_setting = \"keep\"\n",
+                display_path(&paths.mcp_executable)
+            ),
+        )
+        .unwrap();
+
+        let outdated = inspect(&paths).unwrap();
+        assert_eq!(outdated.state, "update_available");
+        assert_eq!(
+            outdated.pending_updates,
+            vec![
+                "新版使用说明",
+                "工具列表（新增 add_task_attachment、add_task_image）"
+            ]
+        );
+
+        let updated = configure(&paths).unwrap();
+        assert_eq!(updated.action_result, "updated");
+        assert_eq!(
+            updated.updated_items,
+            vec![
+                "新版使用说明",
+                "工具列表（新增 add_task_attachment、add_task_image）"
+            ]
+        );
+        let configured = fs::read_to_string(&paths.codex_config).unwrap();
+        assert!(configured.contains("custom_setting = \"keep\""));
+        assert_eq!(configured.matches("add_task_attachment").count(), 1);
+        assert_eq!(configured.matches("add_task_image").count(), 1);
         assert!(configured_tools_current(
             &configured.parse::<DocumentMut>().unwrap()
         ));
@@ -885,7 +957,7 @@ mod tests {
         fs::write(
             &paths.codex_config,
             format!(
-                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"get_task_activity\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\n",
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"add_task_image\", \"add_task_attachment\", \"get_task_activity\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\n",
                 display_path(&paths.mcp_executable)
             ),
         )

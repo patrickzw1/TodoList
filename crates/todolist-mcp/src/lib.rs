@@ -7,6 +7,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::path::Path;
 use task_core::{
     AcceptanceCriterion, ActivityItem, Priority, Project, Subtask, Task, TaskStatus,
     MAX_SAFE_INTEGER,
@@ -68,6 +69,54 @@ impl TodoMcpServer {
 
     fn error(message: impl Into<String>) -> CallToolResult {
         CallToolResult::error(vec![ContentBlock::text(message.into())])
+    }
+
+    fn add_task_file(&self, mut input: AddTaskFileInput, kind: &'static str) -> CallToolResult {
+        input.request_id = match normalize_required_request_id(input.request_id) {
+            Ok(request_id) => request_id,
+            Err(error) => return Self::error(error),
+        };
+        if input.expected_version > MAX_SAFE_INTEGER {
+            return Self::error("expected_version exceeds the exact JavaScript integer range");
+        }
+        let operation = if kind == "image" {
+            "add_task_image"
+        } else {
+            "add_task_attachment"
+        };
+        let result = self.store.import_task_file_idempotent(
+            operation,
+            &input.request_id,
+            &request_fingerprint(&input),
+            &input.task_id,
+            input.expected_version,
+            Path::new(&input.source_path),
+            kind,
+        );
+        match result {
+            Ok(result) => {
+                let task = result
+                    .workspace
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == input.task_id)
+                    .expect("imported file task remains in workspace");
+                Self::success(json!({
+                    "workspaceVersion": result.workspace.version,
+                    "replayed": result.replayed,
+                    "task": task_output(task),
+                    "file": result.file,
+                }))
+            }
+            Err(error) => Self::error(format!(
+                "Could not add TodoList {}: {error}",
+                if kind == "image" {
+                    "image"
+                } else {
+                    "attachment"
+                }
+            )),
+        }
     }
 }
 
@@ -198,6 +247,22 @@ pub struct UpdateTaskInput {
     pub allow_reopen_completed: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct AddTaskFileInput {
+    #[schemars(description = "Task id")]
+    pub task_id: String,
+    #[schemars(description = "Latest task version returned by get_task or list_tasks")]
+    pub expected_version: u64,
+    #[schemars(
+        description = "Absolute path to an existing regular file on the MCP server host; URLs and base64 data are not accepted"
+    )]
+    pub source_path: String,
+    #[schemars(
+        description = "Required stable key for safely retrying this exact file import; maximum 128 characters"
+    )]
+    pub request_id: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct SubtaskInput {
     #[schemars(description = "Existing subtask id; omit when adding a new subtask")]
@@ -307,6 +372,11 @@ fn normalize_request_id(request_id: Option<String>) -> Result<Option<String>, St
         ));
     }
     Ok(Some(request_id.to_string()))
+}
+
+fn normalize_required_request_id(request_id: String) -> Result<String, String> {
+    normalize_request_id(Some(request_id))?
+        .ok_or_else(|| "request_id is required for file imports".to_string())
 }
 
 fn request_fingerprint(value: &impl Serialize) -> String {
@@ -445,7 +515,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and separate attachments/images metadata, but omits activity history to keep normal reads compact. Use get_task_activity only when the user asks for task history. File content is not returned; users add files in desktop task details.",
+        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and separate attachments/images metadata, but omits activity history to keep normal reads compact. Use get_task_activity only when the user asks for task history. File content is not returned; local files can be copied in with add_task_attachment or add_task_image.",
         annotations(
             title = "List TodoList tasks",
             read_only_hint = true,
@@ -597,7 +667,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata (originalName, mediaType, size, storageKey, addedAt). Activity history is omitted to keep normal reads compact; use get_task_activity only when the user asks for history. File content is not returned. Add, remove, and preview files through desktop task details; MCP has no file upload tool.",
+        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata (id, originalName, mediaType, size, storageKey, addedAt). Activity history and file content are omitted. Use add_task_attachment or add_task_image to copy a local MCP-host file into TodoList. File removal, opening, and preview remain desktop-only.",
         annotations(
             title = "Get TodoList task",
             read_only_hint = true,
@@ -822,7 +892,38 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. The returned task omits activity history; use get_task_activity only when the user asks for history. Existing attachments and images are preserved automatically; this tool cannot add, remove, or replace files.",
+        description = "Copy one existing local file from an absolute path on the MCP server host into TodoList's channel-specific managed attachment storage and associate it with a task. The source is never modified or deleted. Pass the task's latest version and a stable request_id; retrying identical input does not create a duplicate. URLs, base64 payloads, removal, opening, and preview are not supported.",
+        annotations(
+            title = "Add TodoList task attachment",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    fn add_task_attachment(
+        &self,
+        Parameters(input): Parameters<AddTaskFileInput>,
+    ) -> CallToolResult {
+        self.add_task_file(input, "attachment")
+    }
+
+    #[tool(
+        description = "Copy one supported local image from an absolute path on the MCP server host into TodoList's channel-specific managed image storage and associate it with a task. The source is never modified or deleted. Pass the task's latest version and a stable request_id; retrying identical input does not create a duplicate. URLs, base64 payloads, removal, opening, and preview are not supported.",
+        annotations(
+            title = "Add TodoList task image",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    fn add_task_image(&self, Parameters(input): Parameters<AddTaskFileInput>) -> CallToolResult {
+        self.add_task_file(input, "image")
+    }
+
+    #[tool(
+        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. The returned task omits activity history; use get_task_activity only when the user asks for history. Existing attachments and images are preserved automatically; use the dedicated add tools to import files. This tool cannot remove or replace files.",
         annotations(
             title = "Update TodoList task",
             read_only_hint = false,
@@ -962,8 +1063,8 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.12",
-    instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, and update_task omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments, and images metadata. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. Attachments and images are added and managed through the desktop UI. File content is not returned; update_task and reorder_tasks preserve file metadata, and this server has no file upload, removal, or preview tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
+    version = "0.2.13",
+    instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, update_task, add_task_attachment, and add_task_image omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments, and images metadata. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. add_task_attachment and add_task_image copy an existing regular file from an absolute source_path on this MCP host into channel-specific managed storage; they do not accept URLs or base64, never modify or delete the source, and require the latest task expected_version plus a stable request_id reused only for an identical retry. File content is never returned. File removal, opening, and preview remain desktop-only; this server has no such tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
 
@@ -977,6 +1078,15 @@ mod tests {
         assert_eq!(result.is_error, Some(false));
         let text = result.content[0].as_text().expect("tool result is text");
         serde_json::from_str(&text.text).expect("tool result contains JSON")
+    }
+
+    fn result_error(result: CallToolResult) -> String {
+        assert_eq!(result.is_error, Some(true));
+        result.content[0]
+            .as_text()
+            .expect("tool error is text")
+            .text
+            .clone()
     }
 
     fn test_server() -> (TodoMcpServer, PathBuf) {
@@ -1059,7 +1169,7 @@ mod tests {
     #[test]
     fn publishes_task_activity_tool_and_bounded_schema() {
         let tools = TodoMcpServer::tool_router().list_all();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 10);
         let history = tools
             .iter()
             .find(|tool| tool.name == "get_task_activity")
@@ -1080,6 +1190,248 @@ mod tests {
         }
         assert!(schema_text.contains("\"minimum\":1"));
         assert!(schema_text.contains("\"maximum\":50"));
+
+        for tool_name in ["add_task_attachment", "add_task_image"] {
+            let file_tool = tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .expect("file import tool is discoverable");
+            assert_eq!(
+                file_tool.annotations.as_ref().unwrap().read_only_hint,
+                Some(false)
+            );
+            assert_eq!(
+                file_tool.annotations.as_ref().unwrap().idempotent_hint,
+                Some(true)
+            );
+            let schema = serde_json::to_value(file_tool.input_schema.as_ref()).unwrap();
+            for property in ["task_id", "expected_version", "source_path", "request_id"] {
+                assert!(schema["properties"].get(property).is_some());
+            }
+            let required = schema["required"].as_array().unwrap();
+            assert!(required.iter().any(|value| value == "request_id"));
+        }
+    }
+
+    #[test]
+    fn imports_local_attachments_and_images_once_without_touching_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let database_path = root.path().join("development/todolist.sqlite");
+        let production_database_path = root.path().join("production/todolist.sqlite");
+        fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(production_database_path.parent().unwrap()).unwrap();
+        let store = SqliteTaskStore::open(&database_path).unwrap();
+        let untouched_store = SqliteTaskStore::open(&production_database_path).unwrap();
+        let initial_workspace = Workspace {
+            version: 1,
+            projects: vec![Project {
+                id: "project-1".into(),
+                name: "TodoList".into(),
+                color: "#1264f4".into(),
+            }],
+            tasks: vec![],
+        };
+        store.save_workspace(&initial_workspace).unwrap();
+        untouched_store.save_workspace(&initial_workspace).unwrap();
+        let server = TodoMcpServer::new(store);
+        let created = result_json(server.create_task(Parameters(CreateTaskInput {
+            request_id: Some("file-import-task".into()),
+            project_id: "project-1".into(),
+            title: "Import files".into(),
+            description: None,
+            priority: None,
+            due_date: None,
+            tags: None,
+            subtasks: None,
+            acceptance_criteria: None,
+            dependencies: None,
+        })));
+        let task_id = created["task"]["id"].as_str().unwrap().to_string();
+        let attachment_source = root.path().join("deck.pptx");
+        let image_source = root.path().join("diagram.png");
+        fs::write(&attachment_source, b"presentation bytes").unwrap();
+        fs::write(&image_source, b"image bytes").unwrap();
+
+        let attachment_input = || AddTaskFileInput {
+            task_id: task_id.clone(),
+            expected_version: 1,
+            source_path: attachment_source.to_string_lossy().into_owned(),
+            request_id: "attach-deck".into(),
+        };
+        let attached = result_json(server.add_task_attachment(Parameters(attachment_input())));
+        assert_eq!(attached["replayed"], false);
+        assert_eq!(attached["task"]["version"], 2);
+        assert!(attached["task"].get("activity").is_none());
+        assert!(attached["file"].get("data").is_none());
+        assert_eq!(
+            attached["file"]["mediaType"],
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        );
+        let attachment_key = attached["file"]["storageKey"].as_str().unwrap();
+        let attachment_path = task_store_sqlite::managed_files::resolve_storage_key(
+            &server.store.managed_files_root(),
+            attachment_key,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&attachment_path).unwrap(), b"presentation bytes");
+        assert_eq!(fs::read(&attachment_source).unwrap(), b"presentation bytes");
+
+        let replayed = result_json(server.add_task_attachment(Parameters(attachment_input())));
+        assert_eq!(replayed["replayed"], true);
+        assert_eq!(replayed["workspaceVersion"], attached["workspaceVersion"]);
+        assert_eq!(replayed["file"]["id"], attached["file"]["id"]);
+        assert_eq!(replayed["task"]["attachments"].as_array().unwrap().len(), 1);
+
+        let imaged = result_json(server.add_task_image(Parameters(AddTaskFileInput {
+            task_id: task_id.clone(),
+            expected_version: 2,
+            source_path: image_source.to_string_lossy().into_owned(),
+            request_id: "attach-diagram".into(),
+        })));
+        assert_eq!(imaged["task"]["version"], 3);
+        assert_eq!(imaged["task"]["images"].as_array().unwrap().len(), 1);
+        let image_path = task_store_sqlite::managed_files::resolve_storage_key(
+            &server.store.managed_files_root(),
+            imaged["file"]["storageKey"].as_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(image_path).unwrap(), b"image bytes");
+        assert_eq!(fs::read(&image_source).unwrap(), b"image bytes");
+
+        let read_back = result_json(server.get_task(Parameters(GetTaskInput { task_id })));
+        assert_eq!(
+            read_back["task"]["attachments"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(read_back["task"]["images"].as_array().unwrap().len(), 1);
+        assert!(untouched_store
+            .load_workspace()
+            .unwrap()
+            .unwrap()
+            .tasks
+            .is_empty());
+        assert!(!untouched_store.managed_files_root().exists());
+    }
+
+    #[test]
+    fn rejects_bad_file_inputs_conflicts_and_changed_idempotency_without_orphans() {
+        let root = tempfile::tempdir().unwrap();
+        let database_path = root.path().join("channel/todolist.sqlite");
+        fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let store = SqliteTaskStore::open(&database_path).unwrap();
+        let source = root.path().join("valid.pdf");
+        fs::write(&source, b"pdf bytes").unwrap();
+        let task = Task {
+            id: "task-1".into(),
+            project_id: "project-1".into(),
+            title: "Files".into(),
+            description: String::new(),
+            status: TaskStatus::Todo,
+            priority: Priority::Medium,
+            due_label: "未安排".into(),
+            due_date: UNSCHEDULED_DUE_DATE.into(),
+            tags: vec![],
+            source: "test".into(),
+            archived: false,
+            pinned: false,
+            version: 1,
+            subtasks: vec![],
+            acceptance_criteria: vec![],
+            attachments: vec![],
+            images: vec![],
+            dependencies: vec![],
+            activity: vec![],
+        };
+        store
+            .save_workspace(&Workspace {
+                version: 1,
+                projects: vec![Project {
+                    id: "project-1".into(),
+                    name: "TodoList".into(),
+                    color: "#1264f4".into(),
+                }],
+                tasks: vec![task],
+            })
+            .unwrap();
+        let server = TodoMcpServer::new(store);
+        result_json(server.add_task_attachment(Parameters(AddTaskFileInput {
+            task_id: "task-1".into(),
+            expected_version: 1,
+            source_path: source.to_string_lossy().into_owned(),
+            request_id: "valid-import".into(),
+        })));
+
+        let wrong_type = root.path().join("not-image.txt");
+        fs::write(&wrong_type, b"text").unwrap();
+        let oversized = root.path().join("oversized.bin");
+        let oversized_file = fs::File::create(&oversized).unwrap();
+        oversized_file
+            .set_len(task_store_sqlite::managed_files::MAX_MANAGED_FILE_BYTES + 1)
+            .unwrap();
+        drop(oversized_file);
+        for (label, source_path, image) in [
+            ("relative", "relative.pdf".to_string(), false),
+            (
+                "missing",
+                root.path()
+                    .join("missing.pdf")
+                    .to_string_lossy()
+                    .into_owned(),
+                false,
+            ),
+            (
+                "directory",
+                root.path().to_string_lossy().into_owned(),
+                false,
+            ),
+            (
+                "wrong image type",
+                wrong_type.to_string_lossy().into_owned(),
+                true,
+            ),
+            ("oversized", oversized.to_string_lossy().into_owned(), false),
+        ] {
+            let input = AddTaskFileInput {
+                task_id: "task-1".into(),
+                expected_version: 2,
+                source_path,
+                request_id: format!("invalid-{label}"),
+            };
+            let error = if image {
+                result_error(server.add_task_image(Parameters(input)))
+            } else {
+                result_error(server.add_task_attachment(Parameters(input)))
+            };
+            assert!(!error.is_empty(), "{label}");
+        }
+
+        let stale = result_error(server.add_task_attachment(Parameters(AddTaskFileInput {
+            task_id: "task-1".into(),
+            expected_version: 1,
+            source_path: source.to_string_lossy().into_owned(),
+            request_id: "stale-version".into(),
+        })));
+        assert!(stale.contains("version_conflict"));
+        let changed_retry =
+            result_error(server.add_task_attachment(Parameters(AddTaskFileInput {
+                task_id: "task-1".into(),
+                expected_version: 1,
+                source_path: wrong_type.to_string_lossy().into_owned(),
+                request_id: "valid-import".into(),
+            })));
+        assert!(changed_retry.contains("idempotency conflict"));
+
+        let workspace = server.store.load_workspace().unwrap().unwrap();
+        assert_eq!(workspace.version, 2);
+        assert_eq!(workspace.tasks[0].version, 2);
+        assert_eq!(workspace.tasks[0].attachments.len(), 1);
+        assert!(workspace.tasks[0].images.is_empty());
+        let attachment_files = fs::read_dir(server.store.managed_files_root().join("attachments"))
+            .unwrap()
+            .count();
+        assert_eq!(attachment_files, 1);
+        assert!(!server.store.managed_files_root().join("images").exists());
+        assert_eq!(fs::read(source).unwrap(), b"pdf bytes");
     }
 
     #[test]

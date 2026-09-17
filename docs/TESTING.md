@@ -94,7 +94,7 @@ Windows build and native observations:
 - Rebuilt the release executable, MSI and `target/release/bundle/nsis/TodoList_0.1.0_x64-setup.exe` with one Cargo job (2026-09-04 17:29 local time). The installers were not installed or published.
 - PE headers confirm that `todolist-desktop.exe` now uses subsystem 2 (Windows GUI); `todolist-mcp.exe` remains subsystem 3 (Windows CUI) for STDIO.
 - The rebuilt release MCP executable completed a real STDIO initialization and schema check against an isolated temporary database; all six MVP tools were present.
-- MCP tests cover project creation, task cursor pagination, persisted retry replay/conflict behavior and the 1,000-record retry-ledger cap.
+- MCP tests cover project creation, task cursor pagination, persisted retry replay/conflict behavior, the 1,000-record retry-ledger cap, and local attachment/image imports. File coverage uses isolated channel directories and real temporary files to verify desktop-readable managed copies, source preservation, idempotent retries, task-version conflicts, bad paths/directories/image types/size limits, MIME metadata, channel isolation, and exact cleanup after a forced post-copy persistence failure.
 - Native backup commands passed round-trip, size-limit, schema, symlink/non-regular-file, duplicate-ID and atomic-write tests. The user also verified the real Windows import/export flow in the release application.
 - Launched the rebuilt release EXE and used the real native sidebar entry. One sticky window appeared. A state request for the main window explicitly reported that it was minimized.
 - Clicking Open Task Board in the sticky note restored the existing main window; its normal native surface could be captured again.
