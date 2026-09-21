@@ -102,7 +102,7 @@ test("task detail leaves wheel delivery on the exposed workspace while blocking 
   assert.match(app, /onPointerUpCapture=\{endOutsideDetailInteraction\}/);
   assert.match(app, /onPointerCancelCapture=\{\(event\) => endOutsideDetailInteraction\(event, true\)\}/);
   assert.match(app, /onClickCapture=\{handleOutsideDetailClick\}/);
-  assert.match(app, /target\.closest\("\.detail-panel, \.image-viewer, \.modal-backdrop"\)/);
+  assert.match(app, /target\.closest\("\.detail-panel, \.image-viewer, \.modal-backdrop, \.date-picker-popover, \.date-picker-dismiss-layer"\)/);
   assert.match(app, /if \(event\.pointerType === "mouse"\) event\.preventDefault\(\)/);
   assert.doesNotMatch(app, /onWheel|WheelEvent|dispatchEvent\([^)]*wheel/i);
 });

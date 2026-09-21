@@ -435,7 +435,7 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
         <div><dt>优先级</dt><dd>{task.priority === "high" && <ArrowUp className="priority-arrow" />} {task.priority === "high" ? "高" : task.priority === "medium" ? "中" : "低"}</dd></div>
         <div><dt>项目</dt><dd><span className="project-chip"><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name}</span></dd></div>
         <div><dt>来源</dt><dd>{task.source}</dd></div>
-        <div><dt>标签</dt><dd className="tags">{task.tags.map((tag) => <span key={tag}>{tag}</span>)}</dd></div>
+        <div className="task-meta-tags"><dt>标签</dt><dd className="tags">{task.tags.map((tag) => <span key={tag}>{tag}</span>)}</dd></div>
       </dl>
       <section className="detail-section description-section">
         <h3>描述</h3>
@@ -799,7 +799,7 @@ function MainApp() {
     setCreateTaskAfterProject(true);
     setShowCreateProject(true);
   };
-  const isOutsideDetailTarget = (target: EventTarget | null) => !(target instanceof Element && target.closest(".detail-panel, .image-viewer, .modal-backdrop"));
+  const isOutsideDetailTarget = (target: EventTarget | null) => !(target instanceof Element && target.closest(".detail-panel, .image-viewer, .modal-backdrop, .date-picker-popover, .date-picker-dismiss-layer"));
   const beginOutsideDetailInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!selectedTask || !selectedProject) return;
     if (!isOutsideDetailTarget(event.target)) return;

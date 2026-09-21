@@ -5,7 +5,7 @@ import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, forma
 import { resolveDefaultProjectId } from "../src/task-creation.ts";
 import { searchTasks, tasksForView } from "../src/task-filtering.ts";
 import { applyChecklistEditorEdit, checklistEditorEdit } from "../src/task-checklists.ts";
-import { isDueDateOnOrBefore, normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "../src/date-utils.ts";
+import { calendarMonthCells, isDueDateOnOrBefore, isValidIsoDate, normalizeOptionalDueDate, shiftIsoDate, shiftIsoMonth, UNSCHEDULED_DUE_DATE } from "../src/date-utils.ts";
 import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "../src/project-colors.ts";
 
 function makeTask(activity = []) {
@@ -173,6 +173,36 @@ test("date helpers validate calendar dates and UI clearing uses the unscheduled 
   assert.equal(normalizeOptionalDueDate(""), UNSCHEDULED_DUE_DATE);
   assert.equal(normalizeOptionalDueDate("   "), UNSCHEDULED_DUE_DATE);
   assert.equal(normalizeOptionalDueDate("2026-09-08"), "2026-09-08");
+  assert.equal(isValidIsoDate("2024-02-29"), true);
+  assert.equal(isValidIsoDate("2026-02-29"), false);
+});
+
+test("calendar helpers produce a stable six-week grid and keyboard-safe date movement", () => {
+  const september = calendarMonthCells(2026, 9);
+  assert.equal(september.length, 42);
+  assert.deepEqual(september[0], { date: "2026-08-30", day: 30, inCurrentMonth: false });
+  assert.deepEqual(september.at(-1), { date: "2026-10-10", day: 10, inCurrentMonth: false });
+  assert.equal(shiftIsoDate("2026-09-01", -1), "2026-08-31");
+  assert.equal(shiftIsoDate("2024-02-28", 1), "2024-02-29");
+  assert.equal(shiftIsoMonth("2026-01-31", 1), "2026-02-28");
+  assert.equal(shiftIsoMonth("2024-01-31", 1), "2024-02-29");
+  assert.equal(calendarMonthCells(1, 1)[0].date, null);
+  assert.equal(calendarMonthCells(9999, 12).at(-1).date, null);
+});
+
+test("task detail tags wrap inside their metadata column and the editor uses a controllable date picker", () => {
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const dialogs = readFileSync(new URL("../src/dialogs.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.match(app, /className="task-meta-tags"/);
+  assert.match(styles, /\.task-meta > div \{[^}]*grid-template-columns: 84px minmax\(0, 1fr\)/);
+  assert.match(styles, /\.tags \{[^}]*max-width: 100%;[^}]*flex-wrap: wrap;/);
+  assert.match(styles, /\.tags span \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;/);
+  assert.doesNotMatch(dialogs, /type="date"/);
+  assert.match(dialogs, /role="dialog"[\s\S]*aria-label="选择截止日期"/);
+  assert.match(dialogs, /aria-label="年份"[\s\S]*aria-label="月份"/);
+  assert.match(dialogs, /清除[\s\S]*今天/);
+  assert.match(dialogs, /ArrowLeft[\s\S]*ArrowRight[\s\S]*ArrowUp[\s\S]*ArrowDown/);
 });
 
 test("list and board render the same filtered visible task collection", () => {

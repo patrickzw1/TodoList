@@ -1,7 +1,7 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const UNSCHEDULED_DUE_DATE = "9999-12-31";
 
-function parseIsoDate(value: string) {
+export function parseIsoDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
   const year = Number(match[1]);
@@ -11,6 +11,66 @@ function parseIsoDate(value: string) {
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) return null;
   return { year, month, day };
+}
+
+export function isValidIsoDate(value: string) {
+  return parseIsoDate(value) !== null;
+}
+
+function dateFromParts(year: number, month: number, day: number) {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+  return date;
+}
+
+function isoDateFromDate(date: Date) {
+  const numericYear = date.getUTCFullYear();
+  if (numericYear < 1 || numericYear > 9999) return null;
+  const year = String(numericYear).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export type CalendarDateCell = {
+  date: string | null;
+  day: number;
+  inCurrentMonth: boolean;
+};
+
+export function calendarMonthCells(year: number, month: number): CalendarDateCell[] {
+  if (!Number.isInteger(year) || year < 1 || year > 9999 || !Number.isInteger(month) || month < 1 || month > 12) return [];
+  const firstWeekday = dateFromParts(year, month, 1).getUTCDay();
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = dateFromParts(year, month, 1 - firstWeekday + index);
+    return {
+      date: isoDateFromDate(date),
+      day: date.getUTCDate(),
+      inCurrentMonth: date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month,
+    };
+  });
+}
+
+export function shiftIsoDate(value: string, days: number) {
+  const parsed = parseIsoDate(value);
+  if (!parsed || !Number.isInteger(days)) return null;
+  const date = dateFromParts(parsed.year, parsed.month, parsed.day + days);
+  const year = date.getUTCFullYear();
+  if (year < 1 || year > 9999) return null;
+  return isoDateFromDate(date);
+}
+
+export function shiftIsoMonth(value: string, months: number) {
+  const parsed = parseIsoDate(value);
+  if (!parsed || !Number.isInteger(months)) return null;
+  const monthStart = dateFromParts(parsed.year, parsed.month + months, 1);
+  const year = monthStart.getUTCFullYear();
+  const month = monthStart.getUTCMonth() + 1;
+  if (year < 1 || year > 9999) return null;
+  const nextMonthStart = dateFromParts(year, month + 1, 1);
+  nextMonthStart.setUTCDate(0);
+  return isoDateFromDate(dateFromParts(year, month, Math.min(parsed.day, nextMonthStart.getUTCDate())));
 }
 
 function calendarDateValue(date: { year: number; month: number; day: number }) {

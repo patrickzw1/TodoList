@@ -1,7 +1,8 @@
-import { Plus, Trash, X } from "@phosphor-icons/react";
-import { FormEvent, type ComponentProps, useEffect, useId, useMemo, useState } from "react";
+import { CalendarBlank, CaretLeft, CaretRight, Plus, Trash, X } from "@phosphor-icons/react";
+import { FormEvent, type ComponentProps, type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Priority, Project, Task, TaskStatus } from "./types";
-import { normalizeOptionalDueDate, UNSCHEDULED_DUE_DATE } from "./date-utils.ts";
+import { calendarMonthCells, isValidIsoDate, localIsoDate, normalizeOptionalDueDate, parseIsoDate, shiftIsoDate, shiftIsoMonth, UNSCHEDULED_DUE_DATE } from "./date-utils.ts";
 import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "./project-colors.ts";
 import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
 import { checklistEditorEdit, type TaskChecklistEdits } from "./task-checklists";
@@ -25,6 +26,209 @@ function splitTags(value: string) {
 function AutoHideTextarea({ className = "", ...props }: ComponentProps<"textarea">) {
   const scrollbar = useAutoHideScrollbar<HTMLTextAreaElement>();
   return <textarea className={`auto-hide-scrollbar ${className}`.trim()} {...props} {...scrollbar} />;
+}
+
+const MONTH_OPTIONS = Array.from({ length: 12 }, (_, index) => index + 1);
+
+function DatePicker({ value, forceInvalid, onChange }: {
+  value: string;
+  forceInvalid: boolean;
+  onChange: (value: string) => void;
+}) {
+  const today = localIsoDate();
+  const initialDate = parseIsoDate(value) ?? parseIsoDate(today)!;
+  const [open, setOpen] = useState(false);
+  const [manualTouched, setManualTouched] = useState(false);
+  const [viewYear, setViewYear] = useState(initialDate.year);
+  const [viewMonth, setViewMonth] = useState(initialDate.month);
+  const [focusedDate, setFocusedDate] = useState(value && isValidIsoDate(value) ? value : today);
+  const [position, setPosition] = useState({ top: 12, left: 12, width: 304 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const { ref: popoverScrollbarRef, ...popoverScrollbar } = useAutoHideScrollbar<HTMLDivElement>();
+  const dialogId = useId();
+  const errorId = useId();
+  const invalid = Boolean(value.trim()) && !isValidIsoDate(value);
+  const showError = invalid && (manualTouched || forceInvalid);
+  const cells = useMemo(() => calendarMonthCells(viewYear, viewMonth), [viewMonth, viewYear]);
+  const selected = isValidIsoDate(value) ? value : "";
+  const years = useMemo(() => {
+    const start = Math.min(1900, viewYear);
+    const end = Math.max(2100, viewYear);
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }, [viewYear]);
+
+  const syncView = (dateValue: string) => {
+    const parsed = parseIsoDate(dateValue) ?? parseIsoDate(today)!;
+    setViewYear(parsed.year);
+    setViewMonth(parsed.month);
+    setFocusedDate(dateValue && isValidIsoDate(dateValue) ? dateValue : today);
+  };
+
+  const placePopover = () => {
+    const anchor = rootRef.current?.getBoundingClientRect();
+    if (!anchor) return;
+    const viewportPadding = 12;
+    const width = Math.min(304, window.innerWidth - viewportPadding * 2);
+    const height = popoverRef.current?.offsetHeight ?? 354;
+    const left = Math.min(Math.max(viewportPadding, anchor.right - width), window.innerWidth - width - viewportPadding);
+    const belowTop = anchor.bottom + 7;
+    const aboveTop = anchor.top - height - 7;
+    const top = belowTop + height <= window.innerHeight - viewportPadding
+      ? belowTop
+      : Math.max(viewportPadding, Math.min(aboveTop, window.innerHeight - height - viewportPadding));
+    setPosition({ top, left, width });
+  };
+
+  const openPicker = () => {
+    syncView(value);
+    setOpen(true);
+  };
+
+  const closePicker = (restoreFocus = false) => {
+    setOpen(false);
+    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  const selectDate = (date: string) => {
+    onChange(date);
+    setManualTouched(false);
+    closePicker(true);
+  };
+
+  const focusCalendarDate = (date: string | null) => {
+    if (!date) return;
+    const parsed = parseIsoDate(date);
+    if (!parsed) return;
+    setViewYear(parsed.year);
+    setViewMonth(parsed.month);
+    setFocusedDate(date);
+  };
+
+  const handleDayKeyDown = (event: KeyboardEvent<HTMLButtonElement>, date: string) => {
+    let next: string | null = null;
+    if (event.key === "ArrowLeft" || event.key === "Left") next = shiftIsoDate(date, -1);
+    if (event.key === "ArrowRight" || event.key === "Right") next = shiftIsoDate(date, 1);
+    if (event.key === "ArrowUp" || event.key === "Up") next = shiftIsoDate(date, -7);
+    if (event.key === "ArrowDown" || event.key === "Down") next = shiftIsoDate(date, 7);
+    if (event.key === "Home") next = shiftIsoDate(date, -dateFromIso(date).weekday);
+    if (event.key === "End") next = shiftIsoDate(date, 6 - dateFromIso(date).weekday);
+    if (event.key === "PageUp") next = shiftIsoMonth(date, -1);
+    if (event.key === "PageDown") next = shiftIsoMonth(date, 1);
+    if (!next) return;
+    event.preventDefault();
+    popoverRef.current?.querySelector<HTMLButtonElement>(`[data-date="${next}"]`)?.focus();
+    focusCalendarDate(next);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const animationFrame = window.requestAnimationFrame(placePopover);
+    const handlePositionChange = () => placePopover();
+    window.addEventListener("resize", handlePositionChange);
+    document.addEventListener("scroll", handlePositionChange, true);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", handlePositionChange);
+      document.removeEventListener("scroll", handlePositionChange, true);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    popoverRef.current?.querySelector<HTMLButtonElement>(`[data-date="${focusedDate}"]`)?.focus();
+  }, [focusedDate, open, viewMonth, viewYear]);
+
+  const moveMonth = (offset: number) => {
+    const anchor = `${String(viewYear).padStart(4, "0")}-${String(viewMonth).padStart(2, "0")}-01`;
+    focusCalendarDate(shiftIsoMonth(anchor, offset));
+  };
+
+  const setCalendarMonth = (year: number, month: number) => {
+    const current = parseIsoDate(focusedDate);
+    const candidate = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(current?.day ?? 1).padStart(2, "0")}`;
+    const safeDate = isValidIsoDate(candidate) ? candidate : `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+    focusCalendarDate(safeDate);
+  };
+
+  const popover = open ? <><div className="date-picker-dismiss-layer" aria-hidden="true" onPointerDown={() => closePicker()} /><div
+    ref={(element) => { popoverRef.current = element; popoverScrollbarRef.current = element; }}
+    id={dialogId}
+    className="date-picker-popover auto-hide-scrollbar"
+    role="dialog"
+    aria-label="选择截止日期"
+    style={position}
+    {...popoverScrollbar}
+    onKeyDown={(event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closePicker(true);
+    }}
+  >
+    <div className="date-picker-heading">
+      <button type="button" onClick={() => moveMonth(-1)} aria-label="上个月"><CaretLeft aria-hidden="true" /></button>
+      <div>
+        <select aria-label="年份" value={viewYear} onChange={(event) => setCalendarMonth(Number(event.target.value), viewMonth)}>{years.map((year) => <option key={year} value={year}>{year}年</option>)}</select>
+        <select aria-label="月份" value={viewMonth} onChange={(event) => setCalendarMonth(viewYear, Number(event.target.value))}>{MONTH_OPTIONS.map((month) => <option key={month} value={month}>{month}月</option>)}</select>
+      </div>
+      <button type="button" onClick={() => moveMonth(1)} aria-label="下个月"><CaretRight aria-hidden="true" /></button>
+    </div>
+    <div className="date-picker-weekdays" aria-hidden="true">{"日一二三四五六".split("").map((day) => <span key={day}>{day}</span>)}</div>
+    <div className="date-picker-grid" role="grid" aria-label={`${viewYear}年${viewMonth}月`}>
+      {cells.map((cell, index) => <button
+        type="button"
+        role="gridcell"
+        key={cell.date ?? `outside-range-${index}`}
+        data-date={cell.date ?? undefined}
+        disabled={!cell.date}
+        className={`${cell.inCurrentMonth ? "" : "outside-month"} ${cell.date === today ? "is-today" : ""} ${cell.date === selected ? "is-selected" : ""}`.trim()}
+        tabIndex={cell.date === focusedDate ? 0 : -1}
+        aria-label={cell.date ? calendarAriaLabel(cell.date) : "超出支持的日期范围"}
+        aria-selected={cell.date === selected}
+        onFocus={() => cell.date && setFocusedDate(cell.date)}
+        onKeyDown={(event) => cell.date && handleDayKeyDown(event, cell.date)}
+        onClick={() => cell.date && selectDate(cell.date)}
+      >{cell.day}</button>)}
+    </div>
+    <div className="date-picker-actions">
+      <button type="button" onClick={() => { onChange(""); setManualTouched(false); closePicker(true); }}>清除</button>
+      <button type="button" onClick={() => selectDate(today)}>今天</button>
+    </div>
+  </div></> : null;
+
+  return <div className="date-picker" ref={rootRef}>
+    <div className="date-picker-input-row">
+      <input
+        id="task-due-date"
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        maxLength={10}
+        placeholder="YYYY-MM-DD"
+        value={value}
+        aria-invalid={showError || undefined}
+        aria-describedby={showError ? errorId : undefined}
+        onBlur={() => setManualTouched(true)}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <button ref={triggerRef} type="button" className="date-picker-trigger" aria-label="打开日期选择器" aria-haspopup="dialog" aria-expanded={open} aria-controls={dialogId} onClick={() => open ? closePicker() : openPicker()}><CalendarBlank aria-hidden="true" /></button>
+    </div>
+    {showError && <span className="date-picker-error" id={errorId} role="alert">请输入有效日期（YYYY-MM-DD）。</span>}
+    {createPortal(popover, document.body)}
+  </div>;
+}
+
+function dateFromIso(value: string) {
+  const parsed = parseIsoDate(value)!;
+  const date = new Date(0);
+  date.setUTCFullYear(parsed.year, parsed.month - 1, parsed.day);
+  return { ...parsed, weekday: date.getUTCDay() };
+}
+
+function calendarAriaLabel(value: string) {
+  const parsed = parseIsoDate(value)!;
+  return `${parsed.year}年${parsed.month}月${parsed.day}日`;
 }
 
 interface TaskEntryDraft {
@@ -110,6 +314,7 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
   const [status, setStatus] = useState<TaskStatus>(task.status);
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [dueDate, setDueDate] = useState(task.dueDate === UNSCHEDULED_DUE_DATE ? "" : task.dueDate);
+  const [dueDateInvalid, setDueDateInvalid] = useState(false);
   const [tags, setTags] = useState(task.tags.join("，"));
   const [subtasks, setSubtasks] = useState<TaskEntryDraft[]>(() => task.subtasks.map((item) => ({ id: item.id, value: item.title, existing: true })));
   const [acceptanceCriteria, setAcceptanceCriteria] = useState<TaskEntryDraft[]>(() => task.acceptanceCriteria.map((item) => ({ id: item.id, value: item.title, existing: true })));
@@ -128,6 +333,11 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
     event.preventDefault();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
+    if (dueDate.trim() && !isValidIsoDate(dueDate)) {
+      setDueDateInvalid(true);
+      window.requestAnimationFrame(() => document.getElementById("task-due-date")?.focus());
+      return;
+    }
     const sections = [
       { id: "task-subtasks", items: subtasks, setItems: setSubtasks },
       { id: "task-acceptance", items: acceptanceCriteria, setItems: setAcceptanceCriteria },
@@ -175,7 +385,7 @@ export function TaskEditorDialog({ task, projects, onClose, onSave }: {
             <label>所属项目<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
             <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as TaskStatus)}><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="done">已完成</option></select></label>
             <label>优先级<select value={priority} onChange={(event) => setPriority(event.target.value as Priority)}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
-            <label>截止日期<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+            <div className="editor-field"><label htmlFor="task-due-date">截止日期</label><DatePicker value={dueDate} forceInvalid={dueDateInvalid} onChange={(nextValue) => { setDueDate(nextValue); if (!nextValue.trim() || isValidIsoDate(nextValue)) setDueDateInvalid(false); }} /></div>
           </div>
           <label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="使用逗号分隔" /></label>
           <div className="task-entry-sections">
