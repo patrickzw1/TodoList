@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::time::Instant;
 use task_core::{
-    AcceptanceCriterion, ActivityItem, Priority, Project, Subtask, Task, TaskStatus,
+    AcceptanceCriterion, ActivityItem, Priority, Project, Subtask, Task, TaskStatus, Workspace,
     MAX_SAFE_INTEGER,
 };
+use task_diagnostics::{DiagnosticLog, Record};
 use task_store_sqlite::{IdempotentMutationResult, SqliteTaskStore};
 use uuid::Uuid;
 
@@ -51,14 +53,58 @@ fn due_label(due_date: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TodoMcpServer {
     store: SqliteTaskStore,
+    logger: Option<DiagnosticLog>,
 }
 
 impl TodoMcpServer {
     pub fn new(store: SqliteTaskStore) -> Self {
-        Self { store }
+        Self {
+            store,
+            logger: None,
+        }
+    }
+
+    pub fn with_logger(store: SqliteTaskStore, logger: DiagnosticLog) -> Self {
+        Self {
+            store,
+            logger: Some(logger),
+        }
+    }
+
+    fn read_workspace(&self, operation: &'static str) -> Result<Option<Workspace>, String> {
+        let started = Instant::now();
+        let result = self.store.load_workspace();
+        if let Some(logger) = &self.logger {
+            let record = match &result {
+                Ok(Some(workspace)) => Record::new("read_completed", operation, "ok").workspace(
+                    workspace.version,
+                    workspace.projects.len(),
+                    workspace.tasks.len(),
+                ),
+                Ok(None) => Record::new("read_completed", operation, "empty"),
+                Err(error) => Record::new("read_failed", operation, "error").error(error),
+            };
+            logger.record(record.duration(started.elapsed()));
+        }
+        result
+    }
+
+    fn record_write_result<T>(
+        &self,
+        operation: &'static str,
+        result: &Result<T, String>,
+        started: Instant,
+    ) {
+        if let Some(logger) = &self.logger {
+            let record = match result {
+                Ok(_) => Record::new("save_completed", operation, "ok"),
+                Err(error) => Record::new("save_failed", operation, "error").error(error),
+            };
+            logger.record(record.duration(started.elapsed()));
+        }
     }
 
     fn success(value: serde_json::Value) -> CallToolResult {
@@ -84,6 +130,7 @@ impl TodoMcpServer {
         } else {
             "add_task_attachment"
         };
+        let started = Instant::now();
         let result = self.store.import_task_file_idempotent(
             operation,
             &input.request_id,
@@ -93,6 +140,7 @@ impl TodoMcpServer {
             Path::new(&input.source_path),
             kind,
         );
+        self.record_write_result(operation, &result, started);
         match result {
             Ok(result) => {
                 let task = result
@@ -407,7 +455,7 @@ impl TodoMcpServer {
         )
     )]
     fn list_projects(&self) -> CallToolResult {
-        match self.store.load_workspace() {
+        match self.read_workspace("list_projects") {
             Ok(Some(workspace)) => Self::success(json!({
                 "workspaceVersion": workspace.version,
                 "projects": workspace.projects,
@@ -474,6 +522,7 @@ impl TodoMcpServer {
             Ok(workspace)
         };
 
+        let started = Instant::now();
         let mutation = if let Some(request_id) = input.request_id.as_deref() {
             self.store.mutate_workspace_idempotent(
                 "create_project",
@@ -492,6 +541,7 @@ impl TodoMcpServer {
                 })
         };
 
+        self.record_write_result("create_project", &mutation, started);
         match mutation {
             Ok(result) => {
                 let Some(project) = result
@@ -529,7 +579,7 @@ impl TodoMcpServer {
         if !(1..=MAX_TASK_PAGE_SIZE).contains(&limit) {
             return Self::error(format!("limit must be between 1 and {MAX_TASK_PAGE_SIZE}"));
         }
-        match self.store.load_workspace() {
+        match self.read_workspace("list_tasks") {
             Ok(Some(workspace)) => {
                 let requested_status = input.status.map(TaskStatus::from);
                 let include_done = input.include_done.unwrap_or(true);
@@ -641,6 +691,7 @@ impl TodoMcpServer {
         let task_ids = input.task_ids.clone();
         let expected_workspace_version = input.expected_workspace_version;
         let archived = input.archived;
+        let started = Instant::now();
         let mutation = self.store.mutate_workspace_if_changed(move |mut workspace| {
             if workspace.version != expected_workspace_version {
                 return Err(serde_json::to_string(&json!({
@@ -654,6 +705,7 @@ impl TodoMcpServer {
             Ok((workspace, changed))
         });
 
+        self.record_write_result("reorder_tasks", &mutation, started);
         match mutation {
             Ok(result) => Self::success(json!({
                 "workspaceVersion": result.workspace.version,
@@ -677,7 +729,7 @@ impl TodoMcpServer {
         )
     )]
     fn get_task(&self, Parameters(input): Parameters<GetTaskInput>) -> CallToolResult {
-        match self.store.load_workspace() {
+        match self.read_workspace("get_task") {
             Ok(Some(workspace)) => match workspace
                 .tasks
                 .into_iter()
@@ -717,7 +769,7 @@ impl TodoMcpServer {
             ));
         }
 
-        match self.store.load_workspace() {
+        match self.read_workspace("get_task_activity") {
             Ok(Some(workspace)) => {
                 let Some(task) = workspace.tasks.iter().find(|task| task.id == input.task_id)
                 else {
@@ -851,6 +903,7 @@ impl TodoMcpServer {
             workspace.tasks.push(created_task);
             Ok(workspace)
         };
+        let started = Instant::now();
         let mutation = if let Some(request_id) = input.request_id.as_deref() {
             self.store.mutate_workspace_idempotent(
                 "create_task",
@@ -869,6 +922,7 @@ impl TodoMcpServer {
                 })
         };
 
+        self.record_write_result("create_task", &mutation, started);
         match mutation {
             Ok(result) => {
                 let Some(task) = result
@@ -935,6 +989,7 @@ impl TodoMcpServer {
     fn update_task(&self, Parameters(input): Parameters<UpdateTaskInput>) -> CallToolResult {
         let task_id = input.task_id.clone();
         let expected_version = input.expected_version;
+        let started = Instant::now();
         let update_result = self.store.mutate_workspace(move |mut workspace| {
             let task = workspace
                 .tasks
@@ -1044,6 +1099,7 @@ impl TodoMcpServer {
             Ok(workspace)
         });
 
+        self.record_write_result("update_task", &update_result, started);
         match update_result {
             Ok(workspace) => {
                 let task = workspace
@@ -1063,7 +1119,7 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.15",
+    version = "0.2.16",
     instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, update_task, add_task_attachment, and add_task_image omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments, and images metadata. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. add_task_attachment and add_task_image copy an existing regular file from an absolute source_path on this MCP host into channel-specific managed storage; they do not accept URLs or base64, never modify or delete the source, and require the latest task expected_version plus a stable request_id reused only for an identical retry. File content is never returned. File removal, opening, and preview remain desktop-only; this server has no such tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}

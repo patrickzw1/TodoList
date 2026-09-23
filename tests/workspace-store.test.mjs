@@ -18,11 +18,12 @@ function fixture(version = 10) {
 
 // Run the real hook with in-memory React hooks, storage and IPC. No user database,
 // timers or browser profile are involved, and all queued operations are flushed.
-function driver({ desktop = true, cacheFails = false, readFails = false, beforeSave, initialDatabase, initialCache, search = "" } = {}) {
+function driver({ desktop = true, desktopHostWithoutBridge = false, cacheFails = false, readFails = false, loadFails = false, loadPending = false, versionFails = false, versionPending = false, beforeSave, initialDatabase, initialCache, search = "" } = {}) {
   let database = initialDatabase === undefined ? fixture(11) : initialDatabase;
+  let versionOverride = null;
   let cached = initialCache === undefined ? fixture() : initialCache;
   let slot = 0, first = true;
-  const states = [], effects = [], listeners = new Map(), timers = [], calls = [];
+  const states = [], effects = [], listeners = new Map(), timers = [], timeouts = [], calls = [], diagnostics = [];
   const react = {
     useState(initial) {
       const index = slot++;
@@ -44,12 +45,23 @@ function driver({ desktop = true, cacheFails = false, readFails = false, beforeS
     dispatchEvent(event) { listeners.get(event.type)?.(); },
     setInterval(callback) { timers.push(callback); return timers.length; },
     clearInterval() {},
-    location: { search },
+    setTimeout(callback) { timeouts.push(callback); return timeouts.length; },
+    clearTimeout(id) { timeouts[id - 1] = null; },
+    location: { search, hostname: desktopHostWithoutBridge ? "tauri.localhost" : "localhost", protocol: "http:" },
   };
   const invoke = async (command, args) => {
     calls.push(command);
-    if (command === "load_workspace") return structuredClone(database);
-    if (command === "load_workspace_version") return database?.version ?? null;
+    if (command === "record_frontend_diagnostic") { diagnostics.push(args.diagnostic); return; }
+    if (command === "load_workspace") {
+      if (loadFails) throw new Error("SQLite unavailable");
+      if (loadPending) return new Promise(() => {});
+      return structuredClone(database);
+    }
+    if (command === "load_workspace_version") {
+      if (versionFails) throw new Error("SQLite poll unavailable");
+      if (versionPending) return new Promise(() => {});
+      return versionOverride ?? database?.version ?? null;
+    }
     if (beforeSave) { const hook = beforeSave; beforeSave = undefined; hook(database); }
     if (database && args.workspace.version <= database.version) throw new Error("workspace version conflict");
     database = structuredClone(args.workspace);
@@ -68,17 +80,114 @@ function driver({ desktop = true, cacheFails = false, readFails = false, beforeS
   }).outputText;
   vm.runInNewContext(source, { exports, require: (name) => {
     assert.ok(dependencies[name], `Unexpected import ${name}`); return dependencies[name];
-  }, window, structuredClone, console, URLSearchParams, CustomEvent: class { constructor(type) { this.type = type; } } });
+  }, window, structuredClone, console: { info() {}, warn() {}, error() {} }, URLSearchParams, CustomEvent: class { constructor(type) { this.type = type; } } });
   const render = () => { slot = 0; const hook = exports.useWorkspace(true); first = false; return hook; };
   render();
   return {
-    render, calls, get database() { return database; }, get cached() { return cached; },
+    render, calls, diagnostics, get database() { return database; }, get cached() { return cached; },
     async flush() { for (let i = 0; i < 6; i++) await new Promise((resolve) => setImmediate(resolve)); return render(); },
     async mount() { for (const effect of effects) effect(); return this.flush(); },
     async poll() { for (const timer of timers) timer(); return this.flush(); },
+    async timeout() { for (const callback of [...timeouts]) callback?.(); return this.flush(); },
     failCache(value) { cacheFails = value; },
+    failLoad(value) { loadFails = value; },
+    hangLoad(value) { loadPending = value; },
+    failVersion(value) { versionFails = value; },
+    hangVersion(value) { versionPending = value; },
+    reportVersion(value) { versionOverride = value; },
   };
 }
+
+test("desktop waits for SQLite before showing any cached workspace or saved status", async () => {
+  const run = driver({ initialDatabase: fixture(101), initialCache: fixture(1) });
+  const before = run.render();
+  assert.equal(before.ready, false);
+  assert.equal(before.loaded, false);
+  assert.equal(before.storageState, "loading");
+  assert.equal(before.workspace.projects.length, 0);
+  const after = await run.mount();
+  assert.equal(after.ready, true);
+  assert.equal(after.loaded, true);
+  assert.equal(after.workspace.version, 101);
+  assert.equal(after.storageState, "saved");
+  assert.equal(after.readTrace.version, 101);
+  assert.equal(after.readTrace.projects, 1);
+  assert.deepEqual(run.diagnostics.map((entry) => entry.event), ["bridge_ready", "initial_read_started", "workspace_applied"]);
+  assert.equal(run.diagnostics.at(-1).tasks, 1);
+  assert.equal(JSON.stringify(run.diagnostics).includes("Task"), false);
+});
+
+test("failed desktop load stays distinct from a valid empty library and blocks writes", async () => {
+  const run = driver({ loadFails: true, initialCache: fixture(10) });
+  const failed = await run.mount();
+  assert.equal(failed.ready, true);
+  assert.equal(failed.loaded, false);
+  assert.equal(failed.storageState, "error");
+  assert.match(failed.storageMessage, /SQLite unavailable/);
+  assert.equal(failed.readTrace.status, "error");
+  failed.commit(update({ title: "Must not save" }));
+  assert.equal(run.calls.includes("save_workspace"), false);
+  run.failLoad(false);
+  const recovered = await (failed.refresh(), run.flush());
+  assert.equal(recovered.loaded, true);
+  assert.equal(recovered.workspace.version, 11);
+});
+
+test("hanging first read times out instead of showing the first-use empty state", async () => {
+  const run = driver({ loadPending: true, initialCache: fixture(10) });
+  const loading = await run.mount();
+  assert.equal(loading.storageState, "loading");
+  const failed = await run.timeout();
+  assert.equal(failed.loaded, false);
+  assert.equal(failed.ready, true);
+  assert.equal(failed.storageState, "error");
+  assert.match(failed.storageMessage, /读取超时/);
+});
+
+test("desktop host without Tauri bridge reports failure instead of reading browser cache", async () => {
+  const run = driver({ desktop: false, desktopHostWithoutBridge: true, initialCache: fixture(10) });
+  const failed = await run.mount();
+  assert.equal(failed.loaded, false);
+  assert.equal(failed.workspace.projects.length, 0);
+  assert.match(failed.storageMessage, /桌面桥接不可用/);
+});
+
+test("poll errors are visible and a later successful poll applies MCP changes", async () => {
+  const run = driver();
+  const initial = await run.mount();
+  assert.equal(initial.workspace.version, 11);
+  run.failVersion(true);
+  const failed = await run.poll();
+  assert.equal(failed.storageState, "error");
+  assert.match(failed.storageMessage, /同步检查失败/);
+  run.failVersion(false);
+  run.database.version++;
+  run.database.tasks[0].title = "MCP";
+  const recovered = await run.poll();
+  assert.equal(recovered.workspace.tasks[0].title, "MCP");
+  assert.equal(recovered.storageState, "saved");
+});
+
+test("hanging version poll times out and reports a synchronization error", async () => {
+  const run = driver();
+  await run.mount();
+  run.hangVersion(true);
+  await run.poll();
+  const failed = await run.timeout();
+  assert.equal(failed.storageState, "error");
+  assert.match(failed.storageMessage, /同步检查失败.*读取超时/);
+  assert.equal(failed.workspace.version, 11);
+});
+
+test("poll refuses a snapshot older than its reported version", async () => {
+  const run = driver();
+  await run.mount();
+  run.reportVersion(12);
+  const failed = await run.poll();
+  assert.equal(failed.workspace.version, 11);
+  assert.equal(failed.storageState, "error");
+  assert.match(failed.storageMessage, /快照与版本不一致/);
+});
 
 test("new desktop and browser workspaces start empty while the browser demo remains explicit", async () => {
   const desktop = driver({ initialDatabase: null, initialCache: null });

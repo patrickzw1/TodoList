@@ -14,12 +14,14 @@ test("version sync changes only owned version fields and preserves registry pack
   const cargoPackages = [
     ["src-tauri/Cargo.toml", "todolist-desktop"],
     ["crates/task-core/Cargo.toml", "task-core"],
+    ["crates/task-diagnostics/Cargo.toml", "task-diagnostics"],
     ["crates/task-store-sqlite/Cargo.toml", "task-store-sqlite"],
     ["crates/todolist-mcp/Cargo.toml", "todolist-mcp"],
   ];
   try {
     await mkdir(join(root, "src-tauri"), { recursive: true });
     await mkdir(join(root, "crates/task-core"), { recursive: true });
+    await mkdir(join(root, "crates/task-diagnostics"), { recursive: true });
     await mkdir(join(root, "crates/task-store-sqlite"), { recursive: true });
     await mkdir(join(root, "crates/todolist-mcp/src"), { recursive: true });
     await writeFile(join(root, "package.json"), `${JSON.stringify({ name: "todolist", version: currentVersion }, null, 2)}\n`);
@@ -40,6 +42,10 @@ test("version sync changes only owned version fields and preserves registry pack
 
 [[package]]
 name = "task-core"
+version = "0.2.12"
+
+[[package]]
+name = "task-diagnostics"
 version = "0.2.12"
 
 [[package]]
@@ -70,7 +76,8 @@ checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
     await writeFile(join(root, "crates/todolist-mcp/src/lib.rs"), `#[tool_handler(\n    name = "todolist",\n    version = "${currentVersion}",\n    instructions = "fixture"\n)]\nimpl ServerHandler for TodoMcpServer {}\n`);
 
     const result = await syncVersion({ root, version: nextVersion });
-    assert.equal(result.changedFiles.length, 9);
+    assert.equal(result.changedFiles.length, 10);
+    assert.ok(result.changedFiles.includes(join(root, "crates/task-diagnostics/Cargo.toml")));
     assert.equal(JSON.parse(await readFile(join(root, "package.json"), "utf8")).version, nextVersion);
     const packageLock = JSON.parse(await readFile(join(root, "package-lock.json"), "utf8"));
     assert.equal(packageLock.version, nextVersion);

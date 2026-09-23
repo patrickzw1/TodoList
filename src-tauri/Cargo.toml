@@ -1,6 +1,6 @@
 [package]
 name = "todolist-desktop"
-version = "0.2.15"
+version = "0.2.16"
 description = "Local-first TodoList desktop app with optional MCP integration"
 authors = ["TodoList contributors"]
 edition = "2021"
@@ -30,6 +30,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 semver = "1"
 sha2 = "0.10"
 task-core = { path = "../crates/task-core" }
+task-diagnostics = { path = "../crates/task-diagnostics" }
 task-store-sqlite = { path = "../crates/task-store-sqlite" }
 toml_edit = "0.22"
 uuid = { version = "1", features = ["v4"] }

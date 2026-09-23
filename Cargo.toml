@@ -2,6 +2,7 @@
 members = [
   "src-tauri",
   "crates/task-core",
+  "crates/task-diagnostics",
   "crates/task-store-sqlite",
   "crates/todolist-mcp",
 ]

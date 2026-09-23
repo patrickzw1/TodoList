@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { copyFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,7 +11,9 @@ const attachmentSource = join(tempDirectory, "smoke.pdf");
 const imageSource = join(tempDirectory, "smoke.png");
 const appVersion = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
 const executableName = process.platform === "win32" ? "todolist-mcp.exe" : "todolist-mcp";
-const executable = process.env.TODOLIST_MCP_EXECUTABLE || join(process.cwd(), "target", "development", "release", executableName);
+const sourceExecutable = process.env.TODOLIST_MCP_EXECUTABLE || join(process.cwd(), "target", "development", "release", executableName);
+const executable = join(tempDirectory, executableName);
+await copyFile(sourceExecutable, executable);
 const task = (id, projectId, archived = false) => ({
   id, projectId, title: id, description: "", status: "todo", priority: "medium",
   dueLabel: "未安排", dueDate: "9999-12-31", tags: [], source: "smoke", archived,
@@ -198,9 +201,21 @@ try {
   if (unchanged.workspaceVersion !== after.workspaceVersion || unchanged.tasks.map((item) => item.id).join(",") !== "task-b,task-a") {
     throw new Error("Failed reorder partially changed the real temporary database");
   }
+  const logNames = (await readdir(join(tempDirectory, "logs"))).filter((name) => /^todolist-mcp-\d+-\d+-\d+\.log$/.test(name));
+  if (logNames.length === 0) throw new Error("MCP did not create a log beside its isolated executable");
+  const logText = (await Promise.all(logNames.map((name) => readFile(join(tempDirectory, "logs", name), "utf8")))).join("\n");
+  if (!logText.includes('"event":"startup"') || !logText.includes('"event":"read_completed"') || !logText.includes('"event":"save_completed"')) {
+    throw new Error("MCP key diagnostic events are missing");
+  }
+  for (const secret of [attachmentSource, imageSource, "task-a", "task-b", "smoke.pdf", "smoke.png"]) {
+    if (logText.includes(secret)) throw new Error("MCP log exposed task text or a raw attachment path");
+  }
   console.log(`MCP stdio smoke passed: ${toolNames.join(", ")}`);
 } finally {
   child.stdin.end();
-  child.kill();
+  if (child.exitCode === null) {
+    child.kill();
+    await once(child, "exit");
+  }
   await rm(tempDirectory, { recursive: true, force: true });
 }

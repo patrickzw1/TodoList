@@ -6,6 +6,7 @@ const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const CARGO_MANIFESTS = [
   ["src-tauri/Cargo.toml", "todolist-desktop"],
   ["crates/task-core/Cargo.toml", "task-core"],
+  ["crates/task-diagnostics/Cargo.toml", "task-diagnostics"],
   ["crates/task-store-sqlite/Cargo.toml", "task-store-sqlite"],
   ["crates/todolist-mcp/Cargo.toml", "todolist-mcp"],
 ];

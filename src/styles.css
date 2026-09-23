@@ -56,6 +56,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .local-state { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .saved-dot { flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: #22a348; }
 .local-state.saving .saved-dot { background: #d99a1b; }
+.local-state.loading .saved-dot { background: #d99a1b; }
 .local-state.merged .saved-dot { background: var(--blue); }
 .local-state.error { color: #b9474d; }
 .local-state.error .saved-dot { background: #d84b52; }
@@ -68,6 +69,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .workspace-panel { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
 .loading-bar { position: absolute; z-index: 5; top: 0; left: 0; width: 34%; height: 2px; background: var(--blue); }
+.workspace-boot { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; width: 100vw; min-height: 100vh; padding: 24px; text-align: center; background: #fff; }
+.workspace-boot h1 { margin: 0; font-size: 20px; }
+.workspace-boot p { margin: 0; color: var(--muted); }
+.workspace-boot > button, .storage-diagnostics > button { padding: 8px 12px; border: 1px solid #bdd0ef; border-radius: 7px; background: #f4f8ff; color: #225eb3; cursor: pointer; }
+.storage-diagnostics { max-width: min(720px, 90vw); margin-top: 16px; font-size: 12px; text-align: left; }
+.storage-diagnostics-result { display: grid; gap: 5px; margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; color: #424851; overflow-wrap: anywhere; }
 .workspace-header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 27px 30px 21px; border-bottom: 1px solid #f0f1f3; }
 .workspace-header h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.5px; }
 .workspace-header h1 span { margin-left: 10px; font-size: 14px; font-weight: 550; letter-spacing: 0; }
@@ -309,6 +316,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-card span { color: #7a818b; font-size: 12px; }
 .settings-card button { height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: white; cursor: pointer; }
 .settings-card button:disabled { color: #9aa1aa; background: #f6f7f8; cursor: not-allowed; }
+.log-diagnostics-card { gap: 14px; align-items: flex-start; text-align: left; }
+.log-diagnostics-card > div { min-width: 0; flex: 1; }
+.log-diagnostics-card .log-directory { overflow-wrap: anywhere; }
+.log-diagnostics-card .log-diagnostics-actions { flex-direction: row; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.workspace-boot > .log-diagnostics-card { width: min(660px, 100%); }
 .update-card { margin-bottom: 0; }
 .update-card button { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .update-card button svg { width: 16px; height: 16px; }

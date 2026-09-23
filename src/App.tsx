@@ -16,7 +16,7 @@ import { resolveDefaultProjectId } from "./task-creation";
 import { searchTasks, tasksForView, type TaskListView } from "./task-filtering";
 import { ConfirmDialog, NoticeDialog, ProjectDeletionDialog, ProjectEditorDialog, TaskEditorDialog, type TaskEdits } from "./dialogs";
 import { closeCurrentWindow, openMainWindow, openStickyWindow } from "./window-actions";
-import { useWorkspace, type StorageState } from "./workspace-store";
+import { useWorkspace, type StorageState, type WorkspaceReadTrace } from "./workspace-store";
 import { importedWorkspaceForSave, remapManagedFileStorageKeys, type WorkspaceBackup } from "./workspace-backup";
 import { useAutoHideScrollbar } from "./use-auto-hide-scrollbar";
 import { validateTaskCompletion } from "./task-validation";
@@ -496,7 +496,53 @@ function IntegrationView({ onStatusChange }: { onStatusChange: (status: CodexInt
 }
 
 function SettingsView({ workspace, onImport }: { workspace: Workspace; onImport: (backup: WorkspaceBackup) => Promise<void> }) {
-  return <ScrollableSettingsPage label="TodoList 设置"><div className="settings-icon"><Gear /></div><h1>设置</h1><p>桌面便签默认始终置顶，但只会在你主动置顶任务后出现。</p><div className="settings-card"><div><strong>便签窗口</strong><span>不由 Codex 自动打开</span></div><span className="quiet-badge">推荐</span></div><DataBackupCard workspace={workspace} onImport={onImport} /><SoftwareUpdateCard /></ScrollableSettingsPage>;
+  return <ScrollableSettingsPage label="TodoList 设置"><div className="settings-icon"><Gear /></div><h1>设置</h1><p>桌面便签默认始终置顶，但只会在你主动置顶任务后出现。</p><div className="settings-card"><div><strong>便签窗口</strong><span>不由 Codex 自动打开</span></div><span className="quiet-badge">推荐</span></div><DataBackupCard workspace={workspace} onImport={onImport} /><SoftwareUpdateCard /><LogDiagnosticsCard /></ScrollableSettingsPage>;
+}
+
+type LogStatus = { available: boolean; directory: string | null; reason: string | null; detailedSecondsRemaining: number };
+const logReason: Record<string, string> = {
+  executable_unavailable: "无法确定程序位置",
+  directory_unwritable: "安装目录无法创建 logs 文件夹",
+  file_unwritable: "无法在 logs 文件夹写入文件",
+  writer_unavailable: "日志写入线程不可用",
+  rotation_failed: "日志轮转失败",
+  write_failed: "日志写入失败",
+};
+
+function LogDiagnosticsCard() {
+  const [status, setStatus] = useState<LogStatus | null>(null);
+  const [error, setError] = useState("");
+  const refresh = useCallback(async () => {
+    if (!isTauri()) { setError("仅桌面程序提供本地日志"); return; }
+    try {
+      setStatus(await invoke<LogStatus>("logging_status"));
+      setError("");
+    } catch { setError("无法读取日志状态"); }
+  }, []);
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+  const toggleDetail = async () => {
+    try {
+      setStatus(await invoke<LogStatus>("set_detailed_logging", { enabled: !status?.detailedSecondsRemaining }));
+      setError("");
+    } catch { setError("无法更改详细日志状态"); }
+  };
+  const openFolder = async () => {
+    try { await invoke("open_logs_directory"); setError(""); }
+    catch { setError("无法打开日志文件夹"); }
+  };
+  return <div className="settings-card log-diagnostics-card"><div><strong>诊断日志</strong>
+    <span>{status?.available ? "GUI 日志可用" : status ? `GUI 日志不可用：${logReason[status.reason ?? ""] ?? "写入状态异常"}` : error ? "桌面日志不可用" : "正在检查日志状态"}</span>
+    <span>GUI 与 MCP 各写独立文件；保存在各自程序旁的 logs 文件夹，自动限制大小并保留约 7 天。</span>
+    <span>MCP 在启动时独立检查写入状态；不可用时会在其错误输出报告。</span>
+    {status?.directory && <span className="log-directory">{status.directory}</span>}
+    {status?.detailedSecondsRemaining ? <span>详细日志已开启，约 {Math.ceil(status.detailedSecondsRemaining / 60)} 分钟后自动关闭</span> : <span>默认记录关键事件；详细模式最长 15 分钟。</span>}
+    {error && <span role="alert">{error}</span>}
+    <div className="log-diagnostics-actions"><button type="button" disabled={!status?.directory} onClick={() => void openFolder()}>打开日志文件夹</button><button type="button" disabled={!status?.available} onClick={() => void toggleDetail()}>{status?.detailedSecondsRemaining ? "关闭详细日志" : "开启 15 分钟详细日志"}</button></div>
+  </div><span className="quiet-badge">桌面</span></div>;
 }
 
 function CreateTaskDialog({ projects, defaultProjectId, onClose, onCreate }: {
@@ -518,8 +564,43 @@ function CreateTaskDialog({ projects, defaultProjectId, onClose, onCreate }: {
   );
 }
 
+type StorageDiagnosticsResult = { build: string; databasePath: string; readError: string | null; version: number | null; projects: number; tasks: number };
+
+function StorageDiagnostics({ workspace, ready, storageMessage, readTrace }: { workspace: Workspace; ready: boolean; storageMessage: string; readTrace: WorkspaceReadTrace | null }) {
+  const [diagnostics, setDiagnostics] = useState<StorageDiagnosticsResult | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const inspect = async () => {
+    setChecking(true);
+    setDiagnosticError("");
+    let timer = 0;
+    try {
+      if (!isTauri()) throw new Error("桌面桥接不可用");
+      const result = await Promise.race([
+        invoke<StorageDiagnosticsResult>("storage_diagnostics"),
+        new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new Error("诊断读取超时")), 10000); }),
+      ]);
+      setDiagnostics(result);
+    } catch (error) {
+      setDiagnosticError(error instanceof Error ? error.message : String(error));
+    } finally {
+      window.clearTimeout(timer);
+      setChecking(false);
+    }
+  };
+  return <div className="storage-diagnostics"><button type="button" disabled={checking} onClick={() => void inspect()}>{checking ? "正在读取诊断…" : "查看存储诊断"}</button>
+    {(diagnostics || diagnosticError) && <div className="storage-diagnostics-result" role="status">
+      <div>前端 v{__APP_VERSION__}：{ready ? "读取已结束" : "读取中"}；工作区版本 {workspace.version}；{workspace.projects.length} 项目，{workspace.tasks.length} 任务；{storageMessage}</div>
+      <div>桌面桥接：{isTauri() ? "可用" : "不可用"}；页面来源：{window.location.protocol}//{window.location.hostname}</div>
+      {readTrace && <div>最近读取：{readTrace.command}；{readTrace.status === "ok" ? "成功" : "失败"}；{readTrace.durationMs} ms{readTrace.version !== undefined ? `；版本 ${readTrace.version}` : ""}{readTrace.projects !== undefined ? `；${readTrace.projects} 项目，${readTrace.tasks} 任务` : ""}</div>}
+      {diagnostics && <><div>构建：{diagnostics.build}</div><div>数据库：{diagnostics.databasePath}</div><div>SQLite：{diagnostics.readError ? `读取失败：${diagnostics.readError}` : `版本 ${diagnostics.version ?? "无"}；${diagnostics.projects} 项目，${diagnostics.tasks} 任务`}</div></>}
+      {diagnosticError && <div>诊断错误：{diagnosticError}</div>}
+    </div>}
+  </div>;
+}
+
 function MainApp() {
-  const { workspace, ready, commit, storageState, storageMessage } = useWorkspace(true);
+  const { workspace, ready, loaded, commit, refresh, storageState, storageMessage, readTrace } = useWorkspace(true);
   const softwareUpdate = useSoftwareUpdate();
   const currentDate = useCurrentDate();
   const today = localIsoDate(currentDate);
@@ -834,6 +915,14 @@ function MainApp() {
     if (shouldCloseDetail) closeDetail();
   };
 
+  if (!loaded) return <div className="workspace-boot" role="status">
+    <h1>{ready ? "无法读取本地任务" : "正在读取本地任务"}</h1>
+    <p>{ready ? storageMessage : "正在连接本机任务库，请稍候。"}</p>
+    {ready && <button type="button" onClick={() => void refresh()}>重试读取</button>}
+    {ready && <StorageDiagnostics workspace={workspace} ready={ready} storageMessage={storageMessage} readTrace={readTrace} />}
+    {ready && <LogDiagnosticsCard />}
+  </div>;
+
   return (
     <div className={`app-shell ${selectedTask && selectedProject ? "has-detail" : ""}`} onPointerDownCapture={beginOutsideDetailInteraction} onPointerUpCapture={endOutsideDetailInteraction} onPointerCancelCapture={(event) => endOutsideDetailInteraction(event, true)} onClickCapture={handleOutsideDetailClick}>
       <Sidebar projects={workspace.projects} view={view} currentVersion={softwareUpdate.currentVersion} updateAvailable={softwareUpdate.phase === "available"} storageState={storageState} storageMessage={storageMessage} integrationStatus={integrationStatus} integrationError={integrationError} openingSticky={openingSticky} onOpenSticky={() => void showSticky(true)} onView={(next) => { setView(next); setSelectedTaskIds(new Set()); if (next.kind === "integration" || next.kind === "settings") clearSelectedTask(); }} onCreate={beginTaskCreation} onCreateProject={() => { setCreateTaskAfterProject(false); setShowCreateProject(true); }} onEditProject={setEditingProjectId} />
@@ -846,7 +935,7 @@ function MainApp() {
           </header>
            <div className={`workspace-content auto-hide-scrollbar ${display === "board" ? "board-workspace" : "list-workspace"}`} role="region" aria-label={`${currentTitle}${display === "board" ? "任务看板" : "任务列表"}`} tabIndex={0} {...workspaceScrollbar}>
              {display === "list" && selectedTaskIds.size > 0 && <div className="batch-action-bar"><strong>已选 {selectedTaskIds.size} 项</strong><span>仅包含当前视图与搜索结果</span><button type="button" onClick={() => setSelectedTaskIds(new Set())}>取消选择</button>{view.kind === "archived" ? <button type="button" className="danger-action" onClick={() => setPendingDeletion({ kind: "batch", taskIds: [...selectedTaskIds] })}><Trash />永久删除</button> : <button type="button" className="secondary-action" onClick={batchArchive}><Archive />批量归档</button>}</div>}
-             {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} selectedTaskIds={selectedTaskIds} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} onMultiSelect={toggleMultiSelection} onSelectAll={selectAllVisible} onReorder={reorderVisibleTasks} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : workspace.projects.length ? "这里还没有任务" : "从第一个项目开始"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : workspace.projects.length ? "点击左侧“新建任务”开始记录" : "新建任务时会先引导创建项目，首次使用不会自动添加演示数据"}</span></div>}
+             {visibleTasks.length ? (display === "list" ? <ListView projects={workspace.projects} tasks={visibleTasks} selectedTaskId={selectedTaskId} selectedTaskIds={selectedTaskIds} onSelect={selectTask} onToggle={toggleTask} onTogglePin={togglePin} onMultiSelect={toggleMultiSelection} onSelectAll={selectAllVisible} onReorder={reorderVisibleTasks} /> : <BoardView projects={workspace.projects} tasks={visibleTasks} onSelect={selectTask} onToggle={toggleTask} onStatusChange={changeTaskStatus} />) : <div className="empty-workspace"><MagnifyingGlass /><strong>{searchQuery.trim() ? "没有匹配的任务" : view.kind === "archived" ? "还没有归档任务" : workspace.projects.length ? "这里还没有任务" : "从第一个项目开始"}</strong><span>{searchQuery.trim() ? "试试搜索其他关键词" : view.kind === "archived" ? "归档的任务会保留在这里" : workspace.projects.length ? "点击左侧“新建任务”开始记录" : "新建任务时会先引导创建项目，首次使用不会自动添加演示数据"}</span>{!workspace.projects.length && !searchQuery.trim() && <StorageDiagnostics workspace={workspace} ready={ready} storageMessage={storageMessage} readTrace={readTrace} />}</div>}
           </div>
           <footer className="workspace-footer">共 {visibleTasks.length} 个任务（未完成 {visibleTasks.filter((task) => task.status !== "done").length} 个）</footer>
         </> : view.kind === "integration" ? <IntegrationView onStatusChange={acceptIntegrationStatus} /> : <SettingsView workspace={workspace} onImport={importWorkspace} />}
@@ -866,7 +955,7 @@ function MainApp() {
 }
 
 function StickyApp() {
-  const { workspace, commit, storageState, storageMessage } = useWorkspace(true);
+  const { workspace, ready, loaded, commit, refresh, storageState, storageMessage } = useWorkspace(true);
   const currentDate = useCurrentDate();
   const [completionNoticeTaskId, setCompletionNoticeTaskId] = useState<string | null>(null);
   const [openingMain, setOpeningMain] = useState(false);
@@ -907,7 +996,7 @@ function StickyApp() {
         <button data-tauri-drag-region="false" onClick={() => void closeCurrentWindow()} aria-label="关闭便签"><X /></button>
       </header>
       <div className="sticky-body auto-hide-scrollbar" role="region" aria-label="桌面置顶任务" tabIndex={0} {...scrollbar}>
-        {pinnedTasks.length ? pinnedTasks.map((task) => (
+        {!loaded ? <div className="sticky-empty"><strong>{ready ? "无法读取本地任务" : "正在读取本地任务"}</strong><span>{ready ? storageMessage : "请稍候"}</span>{ready && <button type="button" onClick={() => void refresh()}>重试读取</button>}</div> : pinnedTasks.length ? pinnedTasks.map((task) => (
           <article className={`sticky-task ${task.status === "done" ? "completed" : ""}`} key={task.id}>
             <StatusButton task={task} onToggle={() => toggleTask(task.id)} />
             <div><strong>{task.title}</strong><span>{workspace.projects.find((project) => project.id === task.projectId)?.name} · {taskDueLabel(task.dueDate, task.dueLabel, currentDate)}</span></div>
