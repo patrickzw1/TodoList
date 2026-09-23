@@ -3,7 +3,10 @@ use std::fs;
 use std::time::Instant;
 use task_core::Workspace;
 use task_diagnostics::{Component, DiagnosticLog, LogStatus, PathIdentity, Record};
-use task_store_sqlite::{storage_path, SqliteTaskStore};
+use task_store_sqlite::{
+    storage_path::{self, StorageClient},
+    SqliteTaskStore,
+};
 use tauri::Manager;
 
 mod backup;
@@ -283,11 +286,13 @@ pub fn run() {
                 )
                 .into());
             }
-            let database_path = storage_path::database_path().map_err(|error| {
-                logger
-                    .record(Record::new("startup_failed", "database_path", "error").error(&error));
-                std::io::Error::other(error)
-            })?;
+            let database_path =
+                storage_path::database_path(StorageClient::Desktop).map_err(|error| {
+                    logger.record(
+                        Record::new("startup_failed", "database_path", "error").error(&error),
+                    );
+                    std::io::Error::other(error)
+                })?;
             logger.record(Record::new("database_selected", "startup", "ok").source(
                 PathIdentity::database(
                     &database_path,
@@ -307,10 +312,13 @@ pub fn run() {
                     .record(Record::new("startup_failed", "database_open", "error").error(&error));
                 std::io::Error::other(error)
             })?;
-            let managed_files_root = storage_path::managed_files_path().map_err(|error| {
-                logger.record(Record::new("startup_failed", "managed_path", "error").error(&error));
-                std::io::Error::other(error)
-            })?;
+            let managed_files_root =
+                storage_path::managed_files_path(&database_path).map_err(|error| {
+                    logger.record(
+                        Record::new("startup_failed", "managed_path", "error").error(&error),
+                    );
+                    std::io::Error::other(error)
+                })?;
             fs::create_dir_all(&managed_files_root).inspect_err(|error| {
                 logger.record(
                     Record::new("startup_failed", "managed_directory", "error")

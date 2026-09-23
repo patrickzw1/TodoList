@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use rmcp::{transport::stdio, ServiceExt};
 use std::fs;
 use task_diagnostics::{Component, DiagnosticLog, PathIdentity, Record};
-use task_store_sqlite::{storage_path::database_path, SqliteTaskStore};
+use task_store_sqlite::{
+    storage_path::{database_path, StorageClient},
+    SqliteTaskStore,
+};
 use todolist_mcp::TodoMcpServer;
 
 fn build_identity() -> String {
@@ -31,7 +34,7 @@ async fn main() -> Result<()> {
     }
     let print_storage_path = std::env::args().nth(1).as_deref() == Some("--print-storage-path");
     if print_storage_path {
-        let database_path = database_path().map_err(anyhow::Error::msg)?;
+        let database_path = database_path(StorageClient::Mcp).map_err(anyhow::Error::msg)?;
         println!("{}", database_path.display());
         return Ok(());
     }
@@ -46,7 +49,7 @@ async fn main() -> Result<()> {
     };
     logger
         .record(Record::new("startup", "mcp", "started").build(env!("CARGO_PKG_VERSION"), channel));
-    let database_path = database_path().map_err(|error| {
+    let database_path = database_path(StorageClient::Mcp).map_err(|error| {
         logger.record(Record::new("startup_failed", "database_path", "error").error(&error));
         anyhow::Error::msg(error)
     })?;
