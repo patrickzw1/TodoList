@@ -36,10 +36,21 @@ fn shared_database_path(home_directory: &Path, production: bool) -> PathBuf {
 }
 
 #[cfg(windows)]
+fn probe_matches_parent(physical: &Path, expected_parent: &Path) -> Result<bool, String> {
+    let physical_parent = physical
+        .parent()
+        .ok_or_else(|| "TodoList storage probe has no parent directory".to_string())?;
+    Ok(physical_parent
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&expected_parent.to_string_lossy()))
+}
+
+#[cfg(windows)]
 fn legacy_path_is_unredirected(legacy: &Path) -> Result<bool, String> {
     let parent = legacy
         .parent()
         .ok_or_else(|| "TodoList legacy database path has no parent directory".to_string())?;
+    let expected_parent = parent.canonicalize().map_err(|error| error.to_string())?;
     // A read of a packaged app's AppData file can fall through to the original
     // file, while a later write is redirected. Probe a fresh, disposable file.
     let probe = tempfile::Builder::new()
@@ -50,11 +61,9 @@ fn legacy_path_is_unredirected(legacy: &Path) -> Result<bool, String> {
         .path()
         .canonicalize()
         .map_err(|error| error.to_string())?;
-    let expected = probe.path().to_string_lossy().into_owned();
-    let resolved = physical.to_string_lossy();
-    let resolved = resolved.strip_prefix(r"\\?\").unwrap_or(&resolved);
+    let matches = probe_matches_parent(&physical, &expected_parent)?;
     probe.close().map_err(|error| error.to_string())?;
-    Ok(resolved.eq_ignore_ascii_case(&expected))
+    Ok(matches)
 }
 
 #[cfg(windows)]
@@ -140,6 +149,31 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
     use task_core::{Project, Workspace};
+
+    #[cfg(windows)]
+    fn short_windows_path(path: &Path) -> Option<PathBuf> {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetShortPathNameW(long: *const u16, short: *mut u16, length: u32) -> u32;
+        }
+
+        let long = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let mut short = vec![0u16; 32768];
+        let length = unsafe { GetShortPathNameW(long.as_ptr(), short.as_mut_ptr(), 32768) };
+        if length == 0 || length >= short.len() as u32 {
+            return None;
+        }
+        Some(PathBuf::from(OsString::from_wide(
+            &short[..length as usize],
+        )))
+    }
 
     #[test]
     fn development_writes_leave_the_production_database_unchanged() {
@@ -275,6 +309,56 @@ mod tests {
             );
         }
         assert!(legacy.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn legacy_probe_accepts_equivalent_lexical_and_short_paths() {
+        let root = tempfile::Builder::new()
+            .prefix("todolist-storage-long-path-")
+            .tempdir()
+            .unwrap();
+        let roaming = root.path().join("Long Roaming Directory");
+        fs::create_dir_all(&roaming).unwrap();
+        fs::create_dir(root.path().join("alias")).unwrap();
+        let lexical_alias = root.path().join("alias/../Long Roaming Directory");
+        assert_eq!(
+            lexical_alias.canonicalize().unwrap(),
+            roaming.canonicalize().unwrap()
+        );
+        assert!(legacy_path_is_unredirected(&lexical_alias.join("todolist.sqlite")).unwrap());
+
+        if let Some(short_alias) = short_windows_path(&roaming) {
+            if !short_alias.eq(&roaming) {
+                eprintln!("Windows 8.3 short-path regression exercised");
+                assert_eq!(
+                    short_alias.canonicalize().unwrap(),
+                    roaming.canonicalize().unwrap()
+                );
+                assert!(legacy_path_is_unredirected(&short_alias.join("todolist.sqlite")).unwrap());
+            } else {
+                eprintln!("Windows 8.3 alias unavailable; lexical alias regression exercised");
+            }
+        } else {
+            eprintln!("Windows 8.3 alias unavailable; lexical alias regression exercised");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn physical_probe_in_another_directory_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let expected = root.path().join("roaming");
+        let redirected = root.path().join("package-localcache");
+        fs::create_dir(&expected).unwrap();
+        fs::create_dir(&redirected).unwrap();
+        let new_file = redirected.join("probe");
+        fs::write(&new_file, b"isolated probe").unwrap();
+        assert!(!probe_matches_parent(
+            &new_file.canonicalize().unwrap(),
+            &expected.canonicalize().unwrap()
+        )
+        .unwrap());
     }
 
     #[cfg(windows)]
