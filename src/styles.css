@@ -217,10 +217,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .attachment-row { display: grid; grid-template-columns: 25px minmax(0, 1fr) 27px 27px; align-items: center; min-height: 45px; padding: 4px 3px 4px 6px; border-radius: 7px; background: #f8f9fb; }
 .attachment-row > svg { width: 18px; height: 18px; color: #6d88b4; }
 .attachment-row.is-unavailable > svg { color: #ba6870; }
-.attachment-name { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; padding: 2px 5px; border: 0; background: transparent; text-align: left; cursor: pointer; }
-.attachment-name > span { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
-.attachment-name > b { font-size: 11px; font-weight: 600; }
-.attachment-name > small { grid-column: 1 / -1; margin-top: 3px; overflow: hidden; color: #87909b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-name { display: flex; flex-direction: column; min-width: 0; padding: 2px 5px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.attachment-file-name { display: flex; align-self: flex-start; max-width: 100%; min-width: 0; font-size: 11px; font-weight: 600; }
+.attachment-stem { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-file-name > b { flex: none; white-space: nowrap; }
+.attachment-name > small { width: 100%; margin-top: 3px; overflow: hidden; color: #87909b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-row.is-unavailable .attachment-name > small { color: #b04d55; }
 .attachment-action { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px; color: #6f7884; background: transparent; cursor: pointer; }
 .attachment-action:hover { color: var(--blue); background: #eaf2ff; }

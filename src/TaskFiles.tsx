@@ -1,7 +1,7 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowLeft, ArrowRight, ArrowSquareOut, File, Image as ImageIcon, MagnifyingGlassMinus,
+  ArrowLeft, ArrowRight, File, FolderOpen, Image as ImageIcon, MagnifyingGlassMinus,
   MagnifyingGlassPlus, Plus, Trash, WarningCircle, X,
 } from "@phosphor-icons/react";
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -211,6 +211,22 @@ export function TaskFileSections({ taskId, attachments, images, onAdd, onRemove 
     }
   };
 
+  const revealAttachment = async (file: ManagedFile) => {
+    if (!isTauri()) {
+      setMessage({ kind: "attachments", text: "仅桌面应用支持在文件夹中显示附件" });
+      return;
+    }
+    try {
+      await invoke("reveal_managed_file", { storageKey: file.storageKey });
+      setUnavailable((current) => { const next = new Set(current); next.delete(file.id); return next; });
+    } catch (reason) {
+      const error = reason instanceof Error ? reason.message : String(reason);
+      const missing = error === "Managed file is unavailable";
+      if (missing) setUnavailable((current) => new Set(current).add(file.id));
+      setMessage({ kind: "attachments", text: missing ? "附件文件不可用，无法在文件夹中显示" : `显示位置失败：${error}` });
+    }
+  };
+
   const visibleAttachments = attachmentsExpanded ? attachments : attachments.slice(0, ATTACHMENT_PREVIEW_COUNT);
   const stack = useMemo(() => images.slice(imageIndex, imageIndex + 3), [imageIndex, images]);
   const openViewer = () => { viewerReturnFocus.current = document.activeElement as HTMLElement | null; setViewerOpen(true); };
@@ -227,8 +243,8 @@ export function TaskFileSections({ taskId, attachments, images, onAdd, onRemove 
         const name = fileNameParts(file.originalName);
         return <div className={`attachment-row ${unavailable.has(file.id) ? "is-unavailable" : ""}`} key={file.id}>
           <File weight="fill" />
-          <button type="button" className="attachment-name" title={file.originalName} onClick={() => void openAttachment(file)}><span>{name.stem}</span><b>{name.extension}</b><small>{unavailable.has(file.id) ? "文件不可用" : `${typeLabel(file)} · ${readableBytes(file.size)}`}</small></button>
-          <button type="button" className="attachment-action" aria-label={`打开 ${file.originalName}`} title="使用默认应用打开" onClick={() => void openAttachment(file)}><ArrowSquareOut /></button>
+          <button type="button" className="attachment-name" title={file.originalName} onClick={() => void openAttachment(file)}><span className="attachment-file-name"><span className="attachment-stem">{name.stem}</span><b>{name.extension}</b></span><small>{unavailable.has(file.id) ? "文件不可用" : `${typeLabel(file)} · ${readableBytes(file.size)}`}</small></button>
+          <button type="button" className="attachment-action" aria-label={`在文件夹中显示 ${file.originalName}`} title="在文件夹中显示" onClick={(event) => { event.stopPropagation(); void revealAttachment(file); }}><FolderOpen /></button>
           <button type="button" className="attachment-action remove" aria-label={`移除 ${file.originalName}`} title="移除托管副本" onClick={() => onRemove("attachments", file.id)}><Trash /></button>
         </div>;
       })}</div> : <button type="button" className="empty-file-add" onClick={() => void importPaths("attachments")}><Plus />添加第一个附件</button>}

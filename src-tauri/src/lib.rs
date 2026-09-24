@@ -357,6 +357,7 @@ pub fn run() {
             restore_workspace,
             managed_files::import_managed_file,
             managed_files::open_managed_file,
+            managed_files::reveal_managed_file,
             managed_files::read_managed_image,
             managed_files::restore_managed_files,
             backup::export_workspace_backup,
