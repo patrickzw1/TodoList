@@ -83,7 +83,7 @@ function activityFrom(value: unknown): ActivityItem {
   return {
     id: text(item.id, "活动记录 ID"),
     action: text(item.action, "活动内容"),
-    actor: choice(item.actor, ["user", "codex"] as const, "活动操作者"),
+    actor: choice(item.actor, ["user", "codex", "claude_code", "deepseek_harness", "ai"] as const, "活动操作者"),
     at: text(item.at, "活动时间"),
   };
 }
@@ -112,7 +112,7 @@ function taskFrom(value: unknown, index: number): Task {
     dueLabel: text(item.dueLabel, "任务日期标签"),
     dueDate: text(item.dueDate, "任务日期"),
     tags: stringArray(item.tags, "任务标签"),
-    source: choice(item.source, ["手动创建", "Codex 创建"] as const, "任务来源"),
+    source: choice(item.source, ["手动创建", "Codex 创建", "Claude Code 创建", "DeepSeek Harness 创建", "AI 创建"] as const, "任务来源"),
     archived: boolean(item.archived, "任务归档状态"),
     pinned: boolean(item.pinned, "任务置顶状态"),
     version: integer(item.version, "任务版本"),

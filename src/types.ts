@@ -22,7 +22,7 @@ export interface AcceptanceCriterion {
 export interface ActivityItem {
   id: string;
   action: string;
-  actor: "user" | "codex";
+  actor: "user" | "codex" | "claude_code" | "deepseek_harness" | "ai";
   at: string;
 }
 
@@ -45,7 +45,7 @@ export interface Task {
   dueLabel: string;
   dueDate: string;
   tags: string[];
-  source: "手动创建" | "Codex 创建";
+  source: "手动创建" | "Codex 创建" | "Claude Code 创建" | "DeepSeek Harness 创建" | "AI 创建";
   archived: boolean;
   pinned: boolean;
   version: number;

@@ -501,3 +501,50 @@ mod tests {
         );
     }
 }
+/// Origin is selected by the local MCP launcher, never by tool input or clientInfo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AiClient {
+    Codex,
+    ClaudeCode,
+    DeepSeekHarness,
+    #[default]
+    Unknown,
+}
+
+impl AiClient {
+    pub fn from_argument(value: &str) -> Result<Self, String> {
+        match value {
+            "codex" => Ok(Self::Codex),
+            "claude_code" => Ok(Self::ClaudeCode),
+            "deepseek_harness" => Ok(Self::DeepSeekHarness),
+            _ => Err("--client must be codex, claude_code, or deepseek_harness".into()),
+        }
+    }
+
+    pub fn actor(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude_code",
+            Self::DeepSeekHarness => "deepseek_harness",
+            Self::Unknown => "ai",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::ClaudeCode => "Claude Code",
+            Self::DeepSeekHarness => "DeepSeek Harness",
+            Self::Unknown => "AI",
+        }
+    }
+
+    // Keep the original Codex retry keys compatible with already persisted requests.
+    pub fn operation(self, operation: &str) -> String {
+        if self == Self::Codex {
+            operation.into()
+        } else {
+            format!("{}:{operation}", self.actor())
+        }
+    }
+}

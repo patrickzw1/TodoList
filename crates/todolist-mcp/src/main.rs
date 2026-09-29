@@ -1,12 +1,24 @@
 use anyhow::{Context, Result};
 use rmcp::{transport::stdio, ServiceExt};
 use std::fs;
+use task_core::AiClient;
 use task_diagnostics::{Component, DiagnosticLog, PathIdentity, Record};
 use task_store_sqlite::{
     storage_path::{database_path, StorageClient},
     SqliteTaskStore,
 };
 use todolist_mcp::TodoMcpServer;
+
+fn client_argument(args: impl IntoIterator<Item = String>) -> Result<AiClient> {
+    let args: Vec<_> = args.into_iter().collect();
+    match args.as_slice() {
+        [] => Ok(AiClient::Unknown),
+        [flag, client] if flag == "--client" => {
+            AiClient::from_argument(client).map_err(anyhow::Error::msg)
+        }
+        _ => anyhow::bail!("Usage: todolist-mcp [--client codex|claude_code|deepseek_harness]"),
+    }
+}
 
 fn build_identity() -> String {
     let channel = if cfg!(feature = "production") {
@@ -26,6 +38,32 @@ fn install_lock_path() -> Result<std::path::PathBuf> {
     Ok(directory.join(".todolist-installing.json"))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn origin_arguments_are_explicit_and_invalid_arguments_fail() {
+        assert_eq!(client_argument(Vec::new()).unwrap(), AiClient::Unknown);
+        for (name, client) in [
+            ("codex", AiClient::Codex),
+            ("claude_code", AiClient::ClaudeCode),
+            ("deepseek_harness", AiClient::DeepSeekHarness),
+        ] {
+            assert_eq!(
+                client_argument(vec!["--client".into(), name.into()]).unwrap(),
+                client
+            );
+        }
+        for args in [
+            vec!["--client"],
+            vec!["--client", "other"],
+            vec!["--client", "codex", "--client", "claude_code"],
+        ] {
+            assert!(client_argument(args.into_iter().map(str::to_string)).is_err());
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--print-build-identity") {
@@ -38,6 +76,7 @@ async fn main() -> Result<()> {
         println!("{}", database_path.display());
         return Ok(());
     }
+    let client = client_argument(std::env::args().skip(1))?;
     let logger = DiagnosticLog::for_current_exe(Component::Mcp);
     if let Some(reason) = logger.status().reason {
         eprintln!("TodoList MCP logs unavailable: {reason}");
@@ -83,6 +122,7 @@ async fn main() -> Result<()> {
         .context("could not open TodoList database")?;
     logger.record(Record::new("startup", "mcp", "ready"));
     let service = TodoMcpServer::with_logger(store, logger.clone())
+        .for_client(client)
         .serve(stdio())
         .await
         .inspect_err(|error| {

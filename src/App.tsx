@@ -5,8 +5,8 @@ import {
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Task, TaskStatus, Workspace } from "./types";
-import { CodexIntegrationCard, readCodexIntegrationStatus, type CodexIntegrationStatus } from "./CodexIntegrationCard";
-import { hasCodexIntegrationUpdate, sidebarCodexIntegrationPresentation } from "./codex-integration-presentation";
+import { AIIntegrationCard, readAIIntegrationStatuses } from "./AIIntegrationCard";
+import { hasAIIntegrationUpdate, sidebarAIIntegrationPresentation, type AIIntegrationStatus } from "./ai-integration-presentation";
 import { DataBackupCard } from "./DataBackupCard";
 import { TaskFileSections } from "./TaskFiles";
 import { SoftwareUpdateCard, SoftwareUpdateProvider, useSoftwareUpdate } from "./SoftwareUpdateCard";
@@ -81,10 +81,10 @@ function StatusButton({ task, onToggle }: { task: Task; onToggle: () => void }) 
 }
 
 function Sidebar({ projects, view, currentVersion, updateAvailable, storageState, storageMessage, integrationStatus, integrationError, openingSticky, onOpenSticky, onView, onCreate, onCreateProject, onEditProject }: {
-  projects: Project[]; view: View; currentVersion: string; updateAvailable: boolean; storageState: StorageState; storageMessage: string; integrationStatus: CodexIntegrationStatus | null; integrationError: string; openingSticky: boolean; onOpenSticky: () => void; onView: (view: View) => void; onCreate: () => void; onCreateProject: () => void; onEditProject: (projectId: string) => void;
+  projects: Project[]; view: View; currentVersion: string; updateAvailable: boolean; storageState: StorageState; storageMessage: string; integrationStatus: AIIntegrationStatus[] | null; integrationError: string; openingSticky: boolean; onOpenSticky: () => void; onView: (view: View) => void; onCreate: () => void; onCreateProject: () => void; onEditProject: (projectId: string) => void;
 }) {
   const [projectsExpanded, setProjectsExpanded] = useState(true);
-  const integrationCopy = sidebarCodexIntegrationPresentation(integrationStatus, integrationError);
+  const integrationCopy = sidebarAIIntegrationPresentation(integrationStatus, integrationError);
   return (
     <aside className="sidebar">
       <div className="brand"><CheckCircle weight="bold" /><span>任务台</span></div>
@@ -109,10 +109,10 @@ function Sidebar({ projects, view, currentVersion, updateAvailable, storageState
       </div>
       <div className="sidebar-bottom">
         <button disabled={openingSticky} onClick={onOpenSticky} title="打开桌面便签并最小化任务台"><PushPin />{openingSticky ? "正在打开便签……" : "桌面便签"}</button>
-        <button className={`integration-nav ${view.kind === "integration" ? "active" : ""}`} onClick={() => onView({ kind: "integration" })}><LinkSimple /><span>连接与权限</span>{hasCodexIntegrationUpdate(integrationStatus) && <i>可更新</i>}</button>
+        <button className={`integration-nav ${view.kind === "integration" ? "active" : ""}`} onClick={() => onView({ kind: "integration" })}><LinkSimple /><span>连接与权限</span>{hasAIIntegrationUpdate(integrationStatus) && <i>可更新</i>}</button>
         <button className={`settings-nav ${view.kind === "settings" ? "active" : ""}`} onClick={() => onView({ kind: "settings" })}><Gear /><span>设置</span><small>v{currentVersion}</small>{updateAvailable && <i>可更新</i>}</button>
         <div className={`local-state ${storageState}`} title={storageMessage}><span className="saved-dot" />{storageMessage}</div>
-        <div className={`mcp-state ${integrationCopy.state}`} title={integrationError || integrationStatus?.message}><LinkSimple />{integrationCopy.label}</div>
+        <div className={`mcp-state ${integrationCopy.state}`} title={integrationError || integrationStatus?.map((s) => `${s.label}：${s.message}`).join("\n")}><LinkSimple />{integrationCopy.label}</div>
       </div>
     </aside>
   );
@@ -482,15 +482,15 @@ function ScrollableSettingsPage({ label, children }: { label: string; children: 
   return <div className="settings-page auto-hide-scrollbar" role="region" aria-label={label} tabIndex={0} {...scrollbar}>{children}</div>;
 }
 
-function IntegrationView({ onStatusChange }: { onStatusChange: (status: CodexIntegrationStatus) => void }) {
+function IntegrationView({ onStatusChange }: { onStatusChange: (status: AIIntegrationStatus) => void }) {
   return (
     <ScrollableSettingsPage label="连接与权限设置">
       <div className="settings-icon"><LinkSimple /></div><h1>连接与权限</h1>
-      <p>TodoList 本体始终独立工作；连接后 Codex 才能按需读取、创建和更新任务。</p>
-      <div className="settings-card"><div><strong>本地 MCP 程序</strong><span>STDIO sidecar 已随 TodoList 安装，桌面应用无需一直打开</span></div><span className="quiet-badge">已就绪</span></div>
-      <CodexIntegrationCard onStatusChange={onStatusChange} />
+      <p>选择 Codex、Claude Code 或 DeepSeek Harness，分别配置本地任务连接。</p>
+      <div className="settings-card"><div><strong>本地 MCP 程序</strong><span>各客户端独立启动本地进程；日常集成共享安装版任务库，任务台无需一直打开</span></div><span className="quiet-badge">本地</span></div>
+      <AIIntegrationCard onStatusChange={onStatusChange} />
       <div className="settings-card"><div><strong>当前数据范围</strong><span>启用后可读取、创建和更新全部本地项目</span></div><span className="quiet-badge">MVP</span></div>
-      <div className="permission-note"><LockKey />写入前会检查任务版本；用户完成的任务不会被 Codex 默认重新打开。</div>
+      <div className="permission-note"><LockKey />写入前会检查任务版本；用户完成的任务不会被 AI 默认重新打开。客户端的工具权限仍然适用。</div>
     </ScrollableSettingsPage>
   );
 }
@@ -621,14 +621,14 @@ function MainApp() {
   const [searchQuery, setSearchQuery] = useState("");
   const [openingSticky, setOpeningSticky] = useState(false);
   const [windowError, setWindowError] = useState<string | null>(null);
-  const [integrationStatus, setIntegrationStatus] = useState<CodexIntegrationStatus | null>(null);
+  const [integrationStatus, setIntegrationStatus] = useState<AIIntegrationStatus[] | null>(null);
   const [integrationError, setIntegrationError] = useState("");
   const openingStickyRef = useRef(false);
   const outsideDetailPointer = useRef<number | null>(null);
   const outsideDetailResetTimer = useRef<number | null>(null);
   const workspaceScrollbar = useAutoHideScrollbar<HTMLDivElement>();
-  const acceptIntegrationStatus = useCallback((status: CodexIntegrationStatus) => {
-    setIntegrationStatus(status);
+  const acceptIntegrationStatus = useCallback((status: AIIntegrationStatus) => {
+    setIntegrationStatus((previous) => [...(previous ?? []).filter((s) => s.client !== status.client), status]);
     setIntegrationError("");
   }, []);
   const showSticky = async (minimizeMain: boolean) => {
@@ -651,8 +651,8 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
-    void readCodexIntegrationStatus()
-      .then(acceptIntegrationStatus)
+    void readAIIntegrationStatuses()
+      .then((statuses) => statuses.forEach(acceptIntegrationStatus))
       .catch((error) => setIntegrationError(error instanceof Error ? error.message : String(error)));
   }, [acceptIntegrationStatus]);
 

@@ -9,6 +9,7 @@ use task_store_sqlite::{
 };
 use tauri::Manager;
 
+mod ai_integration;
 mod backup;
 mod codex_integration;
 mod managed_files;
@@ -364,9 +365,9 @@ pub fn run() {
             backup::read_workspace_backup,
             window_actions::open_main_window,
             window_actions::open_sticky_window,
-            codex_integration::codex_integration_status,
-            codex_integration::configure_codex_integration,
-            codex_integration::remove_codex_integration,
+            ai_integration::ai_integration_status,
+            ai_integration::configure_ai_integration,
+            ai_integration::remove_ai_integration,
             stable_update::check_stable_update,
             update_recovery::component_build_status,
             update_recovery::update_recovery_status,

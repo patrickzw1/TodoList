@@ -1,5 +1,7 @@
 # Codex integration
 
+The integration page now also supports Claude Code and DeepSeek Harness independently. See [AI integration](AI_INTEGRATION.md) for client paths, origin, ownership and verification. This document retains Codex-specific compatibility and tool guidance.
+
 TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex ten tools:
 
 - `list_projects`

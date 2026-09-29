@@ -387,7 +387,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .integration-actions button:disabled, .integration-confirm > button:disabled { color: #9aa1aa; background: #f6f7f8; cursor: not-allowed; }
 .integration-actions button svg { width: 15px; height: 15px; }
 .integration-actions span { display: inline-flex; align-items: center; gap: 5px; color: #7a818b; font-size: 10px; }
-.integration-actions span svg { color: var(--green); }
 .integration-actions .integration-primary, .integration-confirm .integration-primary { border-color: var(--blue); color: #fff; background: var(--blue); }
 .integration-warning { display: flex; align-items: flex-start; gap: 7px; margin: 10px 0; padding: 9px 10px; border-radius: 6px; color: #9d454a; background: #fff2f3; font-size: 11px; line-height: 1.5; }
 .integration-warning svg { flex: 0 0 16px; width: 16px; height: 16px; }
@@ -397,6 +396,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .integration-confirm > .icon-button { position: absolute; top: 8px; right: 8px; width: 28px; padding: 0; border: 0; background: transparent; }
 .integration-confirm strong { display: block; padding-right: 30px; font-size: 12px; }
 .integration-confirm p { margin: 7px 34px 12px 0; color: #5e6876; font-size: 11px; line-height: 1.55; }
+.integration-client-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.integration-client-tabs button { flex: 1; min-width: 0; padding: 10px 6px; border: 1px solid var(--line); border-radius: 7px; background: white; color: #5e6876; font-size: 12px; cursor: pointer; }
+.integration-client-tabs button[aria-selected="true"] { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
+.integration-client-tabs small { display: block; margin-top: 4px; font-size: 10px; }
+.integration-components { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; color: #747b85; font-size: 11px; }
+.integration-components b { padding: 3px 6px; border-radius: 4px; background: #f1f3f5; color: #464d56; font-weight: 500; }
+.ai-integration .integration-paths code { overflow: visible; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+.integration-detection, .integration-reconnect { color: #747b85; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.integration-path-actions, .integration-action-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.integration-path-actions { margin-bottom: 14px; }
+.integration-path-actions button, .integration-manual button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #5e6876; font-size: 11px; cursor: pointer; }
+.integration-path-actions svg { width: 14px; height: 14px; }
+.integration-manual { margin-bottom: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
+.integration-manual label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; color: #5e6876; font-size: 11px; }
+.integration-manual input { min-width: 0; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 5px; color: #464d56; font: inherit; }
+.integration-manual p { color: #747b85; font-size: 11px; line-height: 1.5; }
+.ai-integration .integration-actions { flex-wrap: wrap; }
 
 .modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; background: rgba(24,29,37,.32); }
 .create-dialog { width: min(430px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: 0 24px 60px rgba(22,29,39,.18); }

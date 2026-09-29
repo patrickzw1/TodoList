@@ -39,7 +39,7 @@ database.close();
 await writeFile(attachmentSource, "attachment source");
 await writeFile(imageSource, "image source");
 
-const child = spawn(executable, [], {
+const child = spawn(executable, ["--client", "codex"], {
   cwd: process.cwd(),
   env: {
     ...process.env,

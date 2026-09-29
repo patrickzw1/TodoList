@@ -1,68 +1,44 @@
 # TodoList
 
-一个本地优先、可独立使用，并可选择通过 MCP 与 Codex 互通的 Windows/macOS Todo 桌面应用。
+[English](README.en.md)
 
-## Windows 下载
+TodoList 是本地优先的桌面任务应用。Windows 版可独立使用；用户也可以主动配置 Codex、Claude Code 或 DeepSeek Harness，通过本地 MCP 访问任务。
 
-在 [GitHub Releases](https://github.com/patrickzw1/TodoList/releases/latest) 下载 `TodoList_0.2.9_x64-setup.exe`。当前版本面向 Windows x64 日常试用，macOS 尚未提供安装包。
+## Windows 下载与使用
 
-新安装首次启动为空白任务库，不会自动写入演示项目或任务；升级会保留现有任务与托管文件。任务保存在本机，建议在设置中定期导出 JSON 备份。安装器只协调目标安装目录中的 TodoList GUI 与 MCP；升级时无需退出 Codex，也不会关闭开发版或其他安装目录中的同名进程。
+从 [GitHub Releases](https://github.com/patrickzw1/TodoList/releases) 选择稳定版本，下载对应的 `TodoList_<版本>_x64-setup.exe`。目前提供 Windows x64 安装包；macOS 代码共用，但尚无已验证的安装包。安装后可在设置中查看实际版本。
 
-更新包使用 Tauri 签名校验；本阶段没有 Windows Authenticode 发布者签名，系统可能显示未知发布者提示。已知范围与验证记录见 [v0.2.9 发布说明](docs/RELEASE_NOTES_v0.2.9.md)。
+新安装的任务库为空。升级保留已有任务和托管文件；建议定期在设置中导出 JSON 备份。更新包经 Tauri 签名验证，安装仍由用户确认。当前 Windows 安装包没有 Authenticode 发布者签名，系统可能提示“未知发布者”。安装与更新恢复细节见 [更新说明](docs/UPDATES.md)。
 
-当前功能包含：
+主要功能：
 
-- 任务台与浮动详情：今日、进行中、多个项目、列表/看板和任务详情
-- 新建和编辑任务、创建/编辑项目、当前视图搜索、完成/重新打开、归档与安全删除
-- 项目删除可选择把全部活跃/归档任务转移到既有或新项目，或经再次确认后连同任务永久删除
-- 列表多选、当前过滤结果全选、普通列表批量归档和已归档列表批量永久删除
-- 列表把手拖动与键盘上下键排序；筛选视图只重排可见子集并保留隐藏任务位置
-- 任务详情附件与图片：托管副本、默认应用打开、紧凑叠图浏览和支持键盘/缩放的大图查看器
-- 子任务和验收标准独立确认；有未确认验收标准时不能完成任务
-- 看板拖放和状态选择器可直接更新任务状态
-- 用户主动置顶的 always-on-top 桌面便签窗口
-- 侧栏“桌面便签”可独立打开便签并最小化任务台；行内置顶不最小化，顶部可拖动
-- 主窗口关闭后仍可从便签重新打开任务台；最小化时恢复，打开失败时可见提示并重试
-- React/TypeScript 浏览器预览和 Tauri 2 桌面壳
-- Rust Task Core 与 SQLite WAL 本地存储基础
-- 有界的快照存储：只保留当前任务库；旧版冗余全量快照会在首次启动时安全清理并压缩回收空间
-- 每个任务只保留最近 100 条活动记录；新记录使用真实时间，旧版无时间记录不再永久显示为“刚刚”
-- 带格式版本的 JSON 备份与恢复：系统文件选择、导入预览、托管文件内容、明确确认和双层数据校验
-- UI 与 MCP 并发写入时自动重读并重放用户操作；空闲时只轮询轻量版本号
-- 今日、明日和逾期状态使用本机日期动态计算
-- Rust STDIO MCP：读取项目/任务、创建任务、版本安全更新、本机文件附件/图片导入，以及项目/归档范围内的原子排序
-- 项目内 Codex Skill：冲突时保留用户新修改，不默认重开已完成任务
-- 用户确认后的一键 Codex 集成：注册随应用打包的 MCP，并安装用户级 Skill
-- 侧边栏显示真实的 Codex 集成配置状态，不把“已配置”误写成实时连接
-- 正式桌面后台节流检查更新，侧栏与设置页显示真实版本/可更新状态；下载和安装仍由用户明确触发且只接受通过 Tauri 签名验证的新版本
+- 今日、进行中、全部、项目和已归档视图；列表、看板、视图内搜索与任务排序。
+- 任务详情、子任务、验收标准、附件、图片和活动记录；多选、归档及经确认的永久删除。
+- 可由用户置顶的独立桌面便签；JSON 备份、恢复和本地 SQLite 存储。
+- 桌面界面与 MCP 并发修改时进行版本检查并重放明确的用户操作。
 
-Codex 不会自动打开便签，也不会从 Todo 反向启动会话。集成只写当前用户的 `~/.codex/config.toml` 与 `~/.agents/skills/todolist-mcp`，不会修改 Codex 安装目录；连接方式和安全边界见 [Codex integration](docs/CODEX_INTEGRATION.md)。备份格式和文件安全边界见 [Data backup](docs/DATA_BACKUP.md)。
+## AI 客户端集成
 
-更新采用“下载、验证、重启安装”，不在运行中直接替换文件。正式发布配置和密钥边界见 [Updates](docs/UPDATES.md)。
+在应用的“连接与权限”中选择 Codex、Claude Code 或 DeepSeek Harness，再确认配置、更新或移除。三个客户端的集成分别管理；移除一个客户端不会移除其他客户端的集成或任务。集成使用随应用提供的本地 STDIO MCP 和用户级 Skill，不修改客户端安装目录，也不会自动授予工具权限、打开任务台或置顶便签。界面的“已配置”表示磁盘配置已同步，实际连接请在客户端确认。路径和权限边界见 [AI 集成说明](docs/AI_INTEGRATION.md)；Codex 兼容说明见 [Codex 集成说明](docs/CODEX_INTEGRATION.md)。
 
-## 开发命令
+DeepSeek Harness 桌面版 0.2.0-rc.2 已由用户实际调用 TodoList MCP 的只读 `list_projects`。其余工具及写入操作尚未在该客户端实测。
+
+## 数据位置
+
+Windows 新任务库优先使用用户主目录下的 `%USERPROFILE%\.todolist\app.todolist.desktop\todolist.sqlite`，托管附件位于同目录的 `managed-files`。如果已有安全可用的旧版 `%APPDATA%\app.todolist.desktop\todolist.sqlite`，应用继续使用旧库，不会静默搬迁或清空；路径重定向或数据冲突需要明确迁移。开发版使用独立的 `app.todolist.desktop.dev` 通道，桌面与开发 MCP 共用该通道且不会操作日常任务库。备份与文件规则见 [数据备份说明](docs/DATA_BACKUP.md)。
+
+## 开发与发布
 
 ```powershell
-npm install
+npm ci
 npm run dev
 npm run typecheck
-npm run test:channels
 npm run test:app
-npm run test:windows
 npm run build
 npm run dev:desktop
-npm run build:desktop
 cargo test --workspace
 ```
 
-普通浏览器预览同样从空白工作区开始；只有显式打开 `http://127.0.0.1:1420/?demo=1` 才加载演示数据。
+浏览器预览默认空白；显式使用 `?demo=1` 才加载演示数据。开发 MCP 名为 `todolist_dev`；连接前运行 `npm run build:sidecar`。普通本地桌面构建也使用开发通道，只有显式合并 `src-tauri/tauri.release.conf.json` 的正式构建使用生产通道。Windows 桌面开发还需要 Rust stable 和 WebView2。
 
-桌面构建需要 Rust stable、Windows WebView2，以及对应平台的签名工具链。
-
-本地开发和正式安装使用独立环境：`dev:desktop` 和 `build:desktop` 默认生成 **TodoList Dev**，数据库位于 `%APPDATA%\app.todolist.desktop.dev\todolist.sqlite`；安装版继续使用 `%APPDATA%\app.todolist.desktop\todolist.sqlite`，不会自动搬迁或清空现有任务。独立应用标识也隔离了桌面 WebView 缓存。
-
-开发构建默认位于 `target/development`，项目 MCP 名称为 `todolist_dev`。首次连接前运行 `npm run build:sidecar`；启动脚本只使用这个目录的新开发 sidecar，不回退到旧的 `target/debug` 或 `target/release`。日常任务使用安装版配置的全局 `todolist`，开发版不修改全局集成。修改 MCP 配置后需要重启 Codex。
-
-正式构建须显式合并 `src-tauri/tauri.release.conf.json`，它同时为桌面和 sidecar 启用 `production` Cargo feature。仅使用 `cargo build --release` 仍是开发环境；签名发布命令见 [Updates](docs/UPDATES.md)。
-
-Windows 已验证可生成 MSI 与 NSIS 安装包。macOS 共用同一套 Tauri/React/Rust 源码，但仍需在 macOS 主机上完成签名和安装包验证。
+推送到 `main` 或创建拉取请求只运行验证。正式 Windows 包由 GitHub Actions 的 Release 工作流生成：需要一个已存在、位于 `main`、与源码版本相符的稳定 `vMAJOR.MINOR.PATCH` 标签；推送该标签会触发发布，也可在工作流中手动选择这个已有标签。签名与发布细节见 [更新与发布说明](docs/UPDATES.md)。

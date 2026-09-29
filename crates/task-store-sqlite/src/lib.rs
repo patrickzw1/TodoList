@@ -38,6 +38,19 @@ impl SqliteTaskStore {
         let store = Self {
             database_path: database_path.as_ref().to_path_buf(),
         };
+        // WAL setup and VACUUM cannot run in a SQLite transaction. Serialize
+        // initialization across desktop/client processes; OS releases this lock
+        // on exit. Keep the empty lock file so another process locks the same inode.
+        let initialization = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(store.database_path.with_extension("sqlite-init.lock"))
+            .map_err(|error| format!("Could not open database initialization lock: {error}"))?;
+        initialization
+            .lock()
+            .map_err(|error| format!("Could not lock database initialization: {error}"))?;
         let connection = store.connection()?;
         connection
             .execute_batch(
@@ -204,6 +217,7 @@ impl SqliteTaskStore {
         expected_version: u64,
         source: &Path,
         kind: &str,
+        client: task_core::AiClient,
     ) -> Result<IdempotentFileImportResult, String> {
         if !matches!(kind, "attachment" | "image") {
             return Err("Managed file kind must be attachment or image".to_string());
@@ -309,13 +323,12 @@ impl SqliteTaskStore {
         task.version = next_task_version;
         task.push_activity(ActivityItem {
             id: uuid::Uuid::new_v4().to_string(),
-            actor: "codex".into(),
-            action: if kind == "image" {
-                "Codex 添加图片"
-            } else {
-                "Codex 添加附件"
-            }
-            .into(),
+            actor: client.actor().into(),
+            action: format!(
+                "{} 添加{}",
+                client.label(),
+                if kind == "image" { "图片" } else { "附件" }
+            ),
             at: chrono::Utc::now().to_rfc3339(),
         });
         updated.version = next_workspace_version;
@@ -1001,6 +1014,7 @@ mod tests {
                 1,
                 &source,
                 "attachment",
+                task_core::AiClient::Codex,
             )
             .expect_err("missing version clock forces persistence failure");
         assert!(error.contains("task_version_clock"));

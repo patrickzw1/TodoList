@@ -1,11 +1,9 @@
-use serde::Serialize;
 use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
-use task_store_sqlite::storage_path::IS_PRODUCTION;
 use tempfile::NamedTempFile;
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
@@ -53,10 +51,10 @@ const MCP_TOOLS: [&str; 10] = [
 ];
 
 #[derive(Clone)]
-struct IntegrationPaths {
-    codex_config: PathBuf,
-    skill_directory: PathBuf,
-    mcp_executable: PathBuf,
+pub(crate) struct IntegrationPaths {
+    pub(crate) codex_config: PathBuf,
+    pub(crate) skill_directory: PathBuf,
+    pub(crate) mcp_executable: PathBuf,
 }
 
 #[derive(Default)]
@@ -76,28 +74,24 @@ enum ConfigChange {
     MigratedCommand,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub struct CodexIntegrationStatus {
-    state: String,
-    configured: bool,
-    can_configure: bool,
-    managed_migration: bool,
-    reason: String,
-    pending_updates: Vec<String>,
-    action_result: String,
-    updated_items: Vec<String>,
-    config_path: String,
-    skill_path: String,
-    mcp_command: String,
-    message: String,
+    pub(crate) state: String,
+    pub(crate) configured: bool,
+    pub(crate) can_configure: bool,
+    pub(crate) managed_migration: bool,
+    pub(crate) reason: String,
+    pub(crate) pending_updates: Vec<String>,
+    pub(crate) action_result: String,
+    pub(crate) updated_items: Vec<String>,
+    pub(crate) message: String,
 }
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn resolve_mcp_executable() -> Result<PathBuf, String> {
+pub(crate) fn resolve_mcp_executable() -> Result<PathBuf, String> {
     let executable_name = if cfg!(windows) {
         "todolist-mcp.exe"
     } else {
@@ -113,16 +107,6 @@ fn resolve_mcp_executable() -> Result<PathBuf, String> {
     }
 
     Err("TodoList MCP executable is not bundled with this build".to_string())
-}
-
-fn user_paths() -> Result<IntegrationPaths, String> {
-    let home =
-        dirs::home_dir().ok_or_else(|| "Could not locate the user home directory".to_string())?;
-    Ok(IntegrationPaths {
-        codex_config: home.join(".codex").join("config.toml"),
-        skill_directory: home.join(".agents").join("skills").join("todolist-mcp"),
-        mcp_executable: resolve_mcp_executable()?,
-    })
 }
 
 fn read_document(path: &Path) -> Result<DocumentMut, String> {
@@ -313,7 +297,7 @@ fn is_managed_previous_command(
         && files_have_same_contents(configured_path, &paths.mcp_executable)
 }
 
-fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
+pub(crate) fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
     let document = read_document(&paths.codex_config)?;
     let command = configured_command(&document);
     let expected_command = display_path(&paths.mcp_executable);
@@ -453,27 +437,28 @@ fn inspect(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
         pending_updates,
         action_result: String::new(),
         updated_items: Vec::new(),
-        config_path: display_path(&paths.codex_config),
-        skill_path: display_path(&paths.skill_directory),
-        mcp_command: expected_command,
         message: message.to_string(),
     })
 }
 
-fn backup_file(path: &Path) -> Result<Option<PathBuf>, String> {
+pub(crate) fn backup_file(path: &Path) -> Result<Option<PathBuf>, String> {
     if !path.exists() {
         return Ok(None);
     }
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
-        .as_secs();
-    let backup = path.with_file_name(format!("config.toml.todolist-backup-{timestamp}"));
+        .as_nanos();
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let backup = path.with_file_name(format!(
+        "{name}.todolist-backup-{timestamp}-{}",
+        uuid::Uuid::new_v4()
+    ));
     fs::copy(path, &backup).map_err(|error| error.to_string())?;
     Ok(Some(backup))
 }
 
-fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Target file has no parent directory".to_string())?;
@@ -575,7 +560,7 @@ fn write_managed_command(paths: &IntegrationPaths) -> Result<(), String> {
     )
 }
 
-fn remove_skill(paths: &IntegrationPaths) -> Result<(), String> {
+pub(crate) fn remove_skill(paths: &IntegrationPaths) -> Result<(), String> {
     let state = skill_state(paths)?;
     if !state.exists {
         return Ok(());
@@ -596,7 +581,7 @@ fn remove_skill(paths: &IntegrationPaths) -> Result<(), String> {
     Ok(())
 }
 
-fn remove_config(paths: &IntegrationPaths) -> Result<(), String> {
+pub(crate) fn remove_config(paths: &IntegrationPaths) -> Result<(), String> {
     let mut document = read_document(&paths.codex_config)?;
     let Some(command) = configured_command(&document).map(str::to_string) else {
         if configured_server_exists(&document) {
@@ -624,44 +609,7 @@ fn remove_config(paths: &IntegrationPaths) -> Result<(), String> {
     atomic_write(&paths.codex_config, &document.to_string())
 }
 
-#[tauri::command]
-pub fn codex_integration_status() -> Result<CodexIntegrationStatus, String> {
-    if !IS_PRODUCTION {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        return Ok(CodexIntegrationStatus {
-            state: "development".into(),
-            configured: false,
-            can_configure: false,
-            managed_migration: false,
-            reason: "development".into(),
-            pending_updates: Vec::new(),
-            action_result: String::new(),
-            updated_items: Vec::new(),
-            config_path: display_path(&root.join(".codex/config.toml")),
-            skill_path: display_path(&root.join(".agents/skills/todolist-mcp")),
-            mcp_command: display_path(&root.join("scripts/start-mcp.mjs")),
-            message: "开发版使用项目内的 todolist_dev 和独立开发库；日常集成请在安装版中配置"
-                .into(),
-        });
-    }
-    inspect(&user_paths()?)
-}
-
-fn require_production_integration() -> Result<(), String> {
-    if !IS_PRODUCTION {
-        return Err("开发版不能更改全局 Codex 集成，请在安装版中配置 todolist".into());
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn configure_codex_integration() -> Result<CodexIntegrationStatus, String> {
-    require_production_integration()?;
-    let paths = user_paths()?;
-    configure(&paths)
-}
-
-fn configure(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
+pub(crate) fn configure(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String> {
     if !paths.mcp_executable.is_file() {
         return Err("TodoList MCP executable is missing".to_string());
     }
@@ -723,35 +671,9 @@ fn configure(paths: &IntegrationPaths) -> Result<CodexIntegrationStatus, String>
     Ok(after)
 }
 
-#[tauri::command]
-pub fn remove_codex_integration() -> Result<CodexIntegrationStatus, String> {
-    require_production_integration()?;
-    let paths = user_paths()?;
-    remove_config(&paths)?;
-    remove_skill(&paths)?;
-    let mut status = inspect(&paths)?;
-    status.action_result = "removed".into();
-    status.updated_items = vec!["TodoList MCP 注册与托管 Skill".into()];
-    Ok(status)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    #[cfg(not(feature = "production"))]
-    fn development_commands_cannot_modify_global_integration() {
-        let status = codex_integration_status().unwrap();
-        assert_eq!(status.state, "development");
-        assert!(!status.can_configure);
-        assert!(configure_codex_integration()
-            .unwrap_err()
-            .contains("开发版不能"));
-        assert!(remove_codex_integration()
-            .unwrap_err()
-            .contains("开发版不能"));
-    }
 
     fn test_paths(root: &Path) -> IntegrationPaths {
         let executable = root.join(if cfg!(windows) {

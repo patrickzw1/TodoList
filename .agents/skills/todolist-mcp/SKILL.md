@@ -39,10 +39,10 @@ MCP still cannot remove, open, read, download, or preview attachment/image conte
 - On `workspace_version_conflict` or a stale pagination cursor, restart `list_tasks` without a cursor and read every page of the ordered group again.
 - A `get_task_activity` cursor is bound to one task and its current task version. If it is stale or belongs to another task, restart that history read without the cursor; never reuse it across tasks or versions.
 - Preserve newer user edits. Merge fields that do not conflict.
-- If both the user and Codex changed the same field, keep the user's value and skip that field unless the user explicitly asked to replace it.
+- If both the user and the AI client changed the same field, keep the user's value and skip that field unless the user explicitly asked to replace it.
 - Never reopen a completed task unless the user explicitly asked. Only then set `allow_reopen_completed` to true.
 - Before setting a task to `done`, verify that every acceptance criterion is completed. If any remain incomplete, leave the task open and report what still needs confirmation.
 - Do not change or request pin state. MCP-created tasks must stay unpinned and must not open the desktop note.
 - Reordering changes only the shared order of tasks within one project and archived state. It must not change project, status, dates, archive state, task fields, or task versions.
 
-This integration does not trigger, resume, or modify Codex conversations from TodoList events.
+This integration does not trigger, resume, or modify AI conversations from TodoList events. Each client starts its own local STDIO sidecar; production clients share the installed app's database. The client identity is selected by the local launcher, never by a tool argument or model self-report. Keep the client's existing permission and approval boundaries; installing this Skill grants no tool permissions.

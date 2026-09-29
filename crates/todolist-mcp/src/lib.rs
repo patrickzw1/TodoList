@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Instant;
 use task_core::{
-    AcceptanceCriterion, ActivityItem, Priority, Project, Subtask, Task, TaskStatus, Workspace,
-    MAX_SAFE_INTEGER,
+    AcceptanceCriterion, ActivityItem, AiClient, Priority, Project, Subtask, Task, TaskStatus,
+    Workspace, MAX_SAFE_INTEGER,
 };
 use task_diagnostics::{DiagnosticLog, Record};
 use task_store_sqlite::{IdempotentMutationResult, SqliteTaskStore};
@@ -57,6 +57,7 @@ fn due_label(due_date: &str) -> String {
 pub struct TodoMcpServer {
     store: SqliteTaskStore,
     logger: Option<DiagnosticLog>,
+    client: AiClient,
 }
 
 impl TodoMcpServer {
@@ -64,6 +65,7 @@ impl TodoMcpServer {
         Self {
             store,
             logger: None,
+            client: AiClient::Unknown,
         }
     }
 
@@ -71,7 +73,13 @@ impl TodoMcpServer {
         Self {
             store,
             logger: Some(logger),
+            client: AiClient::Unknown,
         }
+    }
+
+    pub fn for_client(mut self, client: AiClient) -> Self {
+        self.client = client;
+        self
     }
 
     fn read_workspace(&self, operation: &'static str) -> Result<Option<Workspace>, String> {
@@ -132,13 +140,14 @@ impl TodoMcpServer {
         };
         let started = Instant::now();
         let result = self.store.import_task_file_idempotent(
-            operation,
+            &self.client.operation(operation),
             &input.request_id,
             &request_fingerprint(&input),
             &input.task_id,
             input.expected_version,
             Path::new(&input.source_path),
             kind,
+            self.client,
         );
         self.record_write_result(operation, &result, started);
         match result {
@@ -525,7 +534,7 @@ impl TodoMcpServer {
         let started = Instant::now();
         let mutation = if let Some(request_id) = input.request_id.as_deref() {
             self.store.mutate_workspace_idempotent(
-                "create_project",
+                &self.client.operation("create_project"),
                 request_id,
                 &request_fingerprint(&input),
                 &entity_id,
@@ -870,7 +879,7 @@ impl TodoMcpServer {
             due_label: due_label(&due_date),
             due_date,
             tags: input.tags.clone().unwrap_or_default(),
-            source: "Codex 创建".to_string(),
+            source: format!("{} 创建", self.client.label()),
             archived: false,
             pinned: false,
             version: 1,
@@ -883,8 +892,8 @@ impl TodoMcpServer {
             dependencies: input.dependencies.clone().unwrap_or_default(),
             activity: vec![ActivityItem {
                 id: Uuid::new_v4().to_string(),
-                action: "Codex 创建任务".to_string(),
-                actor: "codex".to_string(),
+                action: format!("{} 创建任务", self.client.label()),
+                actor: self.client.actor().to_string(),
                 at: now_label(),
             }],
         };
@@ -906,7 +915,7 @@ impl TodoMcpServer {
         let started = Instant::now();
         let mutation = if let Some(request_id) = input.request_id.as_deref() {
             self.store.mutate_workspace_idempotent(
-                "create_task",
+                &self.client.operation("create_task"),
                 request_id,
                 &request_fingerprint(&input),
                 &entity_id,
@@ -1091,8 +1100,8 @@ impl TodoMcpServer {
             task.version += 1;
             task.push_activity(ActivityItem {
                 id: Uuid::new_v4().to_string(),
-                action: "Codex 更新任务".to_string(),
-                actor: "codex".to_string(),
+                action: format!("{} 更新任务", self.client.label()),
+                actor: self.client.actor().to_string(),
                 at: now_label(),
             });
             workspace.version += 1;
@@ -1119,7 +1128,7 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.19",
+    version = "0.2.20",
     instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, update_task, add_task_attachment, and add_task_image omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments, and images metadata. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. add_task_attachment and add_task_image copy an existing regular file from an absolute source_path on this MCP host into channel-specific managed storage; they do not accept URLs or base64, never modify or delete the source, and require the latest task expected_version plus a stable request_id reused only for an identical retry. File content is never returned. File removal, opening, and preview remain desktop-only; this server has no such tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
@@ -1570,7 +1579,7 @@ mod tests {
         assert!(update["task"].get("activity").is_none());
         let persisted = server.store.load_workspace().unwrap().unwrap().tasks[0].clone();
         assert_eq!(persisted.activity.len(), 100);
-        assert_eq!(persisted.activity.last().unwrap().action, "Codex 更新任务");
+        assert_eq!(persisted.activity.last().unwrap().action, "AI 更新任务");
 
         let stale = update_title(&server, &task, "Stale overwrite");
         let stale_text = &stale.content[0].as_text().unwrap().text;
@@ -1931,7 +1940,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_unpinned_codex_task() {
+    fn creates_unpinned_generic_ai_task_without_a_configured_client() {
         let (server, database_path) = test_server();
         let result = server.create_task(Parameters(CreateTaskInput {
             request_id: None,
@@ -1950,7 +1959,7 @@ mod tests {
         let workspace = server.store.load_workspace().unwrap().unwrap();
         assert_eq!(workspace.tasks.len(), 1);
         assert!(!workspace.tasks[0].pinned);
-        assert_eq!(workspace.tasks[0].source, "Codex 创建");
+        assert_eq!(workspace.tasks[0].source, "AI 创建");
         assert!(workspace.tasks[0].attachments.is_empty());
         assert!(workspace.tasks[0].images.is_empty());
         drop(server);

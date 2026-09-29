@@ -14,6 +14,15 @@ function workspace() {
   };
 }
 
+test("historical Codex and new local AI client origins round trip", () => {
+  for (const [source, actor] of [["Codex 创建", "codex"], ["Claude Code 创建", "claude_code"], ["DeepSeek Harness 创建", "deepseek_harness"], ["AI 创建", "ai"]]) {
+    const fixture = workspace(); fixture.tasks[0].source = source;
+    fixture.tasks[0].activity = [{ id: "activity-1", action: "fixture", actor, at: "2026-09-29" }];
+    const result = parseWorkspaceBackup(JSON.stringify(createWorkspaceBackup(fixture)));
+    assert.equal(result.workspace.tasks[0].source, source); assert.equal(result.workspace.tasks[0].activity[0].actor, actor);
+  }
+});
+
 test("TodoList backup round trips its metadata and workspace", () => {
   const backup = createWorkspaceBackup(workspace(), 1788494400, "0.1.0");
   const parsed = parseWorkspaceBackup(JSON.stringify(backup));
