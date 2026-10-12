@@ -25,11 +25,11 @@ Acceptance criteria may be supplied as short strings when creating a task. When 
 
 ## Attachments and images
 
-Task details have separate `attachments` and `images` collections. `get_task`, `list_tasks`, `add_task_attachment`, and `add_task_image` return metadata: `id`, `originalName`, `mediaType`, `size`, `storageKey`, and `addedAt`. These results do not include file content, and `storageKey` is an internal reference, not a source path to open or upload.
+Task details have separate `attachments` and `images` collections. Every MCP task result, including list, detail, create, update, and file-add results, retains `id`, `originalName`, `mediaType`, `size`, `storageKey`, and `addedAt`. Each file also has a runtime-only `localPath` and `localPathStatus`. An `available` path is the absolute path of the checked managed copy on the MCP host, not the original source. A missing, unsafe, or unavailable copy has `localPath: null`; do not claim it can be opened. `storageKey` is an internal reference, not a source path.
 
 The two add tools copy an existing regular file from the local filesystem of the computer running the MCP server into the active TodoList channel's managed storage. They never modify or delete the source. They do not accept HTTP(S) URLs, data URIs, base64 payloads, directories, links, unsupported image types, or files over 100 MB. Do not claim that writing a path in a task description attaches a file, and do not edit SQLite or the managed-file directory directly.
 
-MCP still cannot remove, open, read, download, or preview attachment/image content. Those actions remain in the desktop task-detail panel. If the source file is not present on the MCP host, explain that it must first be made available there; do not invent a network upload flow.
+TodoList MCP does not return file content or provide file-read, preview, removal, or desktop-open tools. A client with permission and a local file/image tool may separately read an available `localPath` when it can access the same MCP host filesystem. Receiving a path does not mean the content was read; a remote client must not assume the path is accessible. Paths are checked when returned and can become stale. The desktop task-detail panel retains its own file actions. If an import source is not present on the MCP host, explain that it must first be made available there; do not invent a network upload flow.
 
 `update_task` automatically preserves existing attachments and images while updating supported task fields. Do not attempt to replace these collections through other fields.
 

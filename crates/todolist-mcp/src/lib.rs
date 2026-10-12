@@ -7,13 +7,14 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::path::Path;
 use std::time::Instant;
+use std::{fs, io::ErrorKind, path::Path};
 use task_core::{
-    AcceptanceCriterion, ActivityItem, AiClient, Priority, Project, Subtask, Task, TaskStatus,
-    Workspace, MAX_SAFE_INTEGER,
+    AcceptanceCriterion, ActivityItem, AiClient, ManagedFile, Priority, Project, Subtask, Task,
+    TaskStatus, Workspace, MAX_SAFE_INTEGER,
 };
 use task_diagnostics::{DiagnosticLog, Record};
+use task_store_sqlite::managed_files::resolve_storage_key;
 use task_store_sqlite::{IdempotentMutationResult, SqliteTaskStore};
 use uuid::Uuid;
 
@@ -125,6 +126,56 @@ impl TodoMcpServer {
         CallToolResult::error(vec![ContentBlock::text(message.into())])
     }
 
+    fn file_output(&self, file: &ManagedFile, collection: &str) -> serde_json::Value {
+        let mut value = serde_json::to_value(file).expect("serialize managed file");
+        let root = self.store.managed_files_root();
+        let (local_path, status) = if !file.storage_key.starts_with(&format!("{collection}/")) {
+            (None, "unsafe")
+        } else {
+            match resolve_storage_key(&root, &file.storage_key) {
+                Err(_) => (None, "unsafe"),
+                Ok(path) => match fs::symlink_metadata(&path) {
+                    Err(error) if error.kind() == ErrorKind::NotFound => (None, "missing"),
+                    Err(_) => (None, "unavailable"),
+                    Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                        (None, "unsafe")
+                    }
+                    Ok(_) => match (fs::canonicalize(&root), fs::canonicalize(&path)) {
+                        (Ok(root), Ok(path)) if path.starts_with(&root) => match path.to_str() {
+                            Some(path) => (Some(path.to_string()), "available"),
+                            None => (None, "unavailable"),
+                        },
+                        (Ok(_), Ok(_)) => (None, "unsafe"),
+                        _ => (None, "unavailable"),
+                    },
+                },
+            }
+        };
+        value["localPath"] = json!(local_path);
+        value["localPathStatus"] = json!(status);
+        value
+    }
+
+    fn task_output(&self, task: &Task) -> serde_json::Value {
+        let mut value = serde_json::to_value(task).expect("serialize task output");
+        value
+            .as_object_mut()
+            .expect("task serializes as an object")
+            .remove("activity")
+            .expect("stored task includes activity");
+        value["attachments"] = task
+            .attachments
+            .iter()
+            .map(|file| self.file_output(file, "attachments"))
+            .collect();
+        value["images"] = task
+            .images
+            .iter()
+            .map(|file| self.file_output(file, "images"))
+            .collect();
+        value
+    }
+
     fn add_task_file(&self, mut input: AddTaskFileInput, kind: &'static str) -> CallToolResult {
         input.request_id = match normalize_required_request_id(input.request_id) {
             Ok(request_id) => request_id,
@@ -161,8 +212,8 @@ impl TodoMcpServer {
                 Self::success(json!({
                     "workspaceVersion": result.workspace.version,
                     "replayed": result.replayed,
-                    "task": task_output(task),
-                    "file": result.file,
+                    "task": self.task_output(task),
+                    "file": self.file_output(&result.file, if kind == "image" { "images" } else { "attachments" }),
                 }))
             }
             Err(error) => Self::error(format!(
@@ -441,16 +492,6 @@ fn request_fingerprint(value: &impl Serialize) -> String {
     format!("{:x}", Sha256::digest(payload))
 }
 
-fn task_output(task: &Task) -> serde_json::Value {
-    let mut value = serde_json::to_value(task).expect("serialize task output");
-    value
-        .as_object_mut()
-        .expect("task serializes as an object")
-        .remove("activity")
-        .expect("stored task includes activity");
-    value
-}
-
 #[tool_router]
 impl TodoMcpServer {
     #[tool(
@@ -574,7 +615,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and separate attachments/images metadata, but omits activity history to keep normal reads compact. Use get_task_activity only when the user asks for task history. File content is not returned; local files can be copied in with add_task_attachment or add_task_image.",
+        description = "List current TodoList tasks with optional filters and cursor pagination. Returns task versions and attachments/images metadata with localPath for available managed copies on the MCP host (otherwise null with localPathStatus). Activity history and file content are omitted. A client may read a returned localPath with its own permitted local tools; remote clients may not share this filesystem. Use get_task_activity only when the user asks for history.",
         annotations(
             title = "List TodoList tasks",
             read_only_hint = true,
@@ -662,7 +703,7 @@ impl TodoMcpServer {
                     .iter()
                     .skip(start)
                     .take(limit as usize)
-                    .map(task_output)
+                    .map(|task| self.task_output(task))
                     .collect::<Vec<_>>();
                 Self::success(json!({
                     "workspaceVersion": workspace.version,
@@ -728,7 +769,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata (id, originalName, mediaType, size, storageKey, addedAt). Activity history and file content are omitted. Use add_task_attachment or add_task_image to copy a local MCP-host file into TodoList. File removal, opening, and preview remain desktop-only.",
+        description = "Read one TodoList task by id before updating it, including separate attachments/images metadata and localPath for available managed copies on the MCP host (otherwise null with localPathStatus). Activity history and file content are omitted. A permitted local client tool can read that path; remote clients may not share this filesystem. Use add_task_attachment or add_task_image to import files. MCP has no file-read or desktop-open tool.",
         annotations(
             title = "Get TodoList task",
             read_only_hint = true,
@@ -746,7 +787,7 @@ impl TodoMcpServer {
             {
                 Some(task) => Self::success(json!({
                     "workspaceVersion": workspace.version,
-                    "task": task_output(&task),
+                    "task": self.task_output(&task),
                 })),
                 None => Self::error(format!("Task '{}' was not found", input.task_id)),
             },
@@ -846,7 +887,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Create an unpinned TodoList task in an existing project. Pass a stable request_id so a transport retry returns the original task instead of creating a duplicate. The returned task omits activity history; use get_task_activity only when the user asks for history. This never opens the desktop note.",
+        description = "Create an unpinned TodoList task in an existing project. Pass a stable request_id so a transport retry returns the original task instead of creating a duplicate. A replayed task may now contain files; their metadata includes localPath for available managed copies on this MCP host. Activity history and file content are omitted. This never opens the desktop note.",
         annotations(
             title = "Create TodoList task",
             read_only_hint = false,
@@ -947,7 +988,7 @@ impl TodoMcpServer {
                 Self::success(json!({
                     "workspaceVersion": result.workspace.version,
                     "replayed": result.replayed,
-                    "task": task_output(task),
+                    "task": self.task_output(task),
                 }))
             }
             Err(error) => Self::error(format!("Could not create TodoList task: {error}")),
@@ -955,7 +996,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Copy one existing local file from an absolute path on the MCP server host into TodoList's channel-specific managed attachment storage and associate it with a task. The source is never modified or deleted. Pass the task's latest version and a stable request_id; retrying identical input does not create a duplicate. URLs, base64 payloads, removal, opening, and preview are not supported.",
+        description = "Copy one existing local file from an absolute path on the MCP server host into TodoList's channel-specific managed attachment storage and associate it with a task. Returned task and file metadata include the managed copy's localPath when available, not the source path. The source is never modified or deleted. Pass the latest task version and a stable request_id; identical retries do not duplicate the file. URLs, base64 payloads, MCP file reading, removal, and desktop opening are not supported.",
         annotations(
             title = "Add TodoList task attachment",
             read_only_hint = false,
@@ -972,7 +1013,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Copy one supported local image from an absolute path on the MCP server host into TodoList's channel-specific managed image storage and associate it with a task. The source is never modified or deleted. Pass the task's latest version and a stable request_id; retrying identical input does not create a duplicate. URLs, base64 payloads, removal, opening, and preview are not supported.",
+        description = "Copy one supported local image from an absolute path on the MCP server host into TodoList's channel-specific managed image storage and associate it with a task. Returned task and file metadata include the managed copy's localPath when available, not the source path. The source is never modified or deleted. Pass the latest task version and a stable request_id; identical retries do not duplicate the file. URLs, base64 payloads, MCP file reading, removal, and desktop opening are not supported.",
         annotations(
             title = "Add TodoList task image",
             read_only_hint = false,
@@ -986,7 +1027,7 @@ impl TodoMcpServer {
     }
 
     #[tool(
-        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. The returned task omits activity history; use get_task_activity only when the user asks for history. Existing attachments and images are preserved automatically; use the dedicated add tools to import files. This tool cannot remove or replace files.",
+        description = "Update fields on an existing TodoList task using optimistic version checking. Read the task first and pass its latest version. Returned attachments/images include localPath for available managed copies on the MCP host; activity history and file content are omitted. Existing files are preserved automatically; use the dedicated add tools to import files. This tool cannot remove or replace files.",
         annotations(
             title = "Update TodoList task",
             read_only_hint = false,
@@ -1012,7 +1053,7 @@ impl TodoMcpServer {
                     "message": "The task changed after it was read. Read it again and preserve newer user edits.",
                     "expectedVersion": expected_version,
                     "currentVersion": task.version,
-                    "currentTask": task_output(task),
+                    "currentTask": self.task_output(task),
                 }))
                 .expect("serialize version conflict"));
             }
@@ -1118,7 +1159,7 @@ impl TodoMcpServer {
                     .expect("updated task remains in workspace");
                 Self::success(json!({
                     "workspaceVersion": workspace.version,
-                    "task": task_output(task),
+                    "task": self.task_output(task),
                 }))
             }
             Err(error) => Self::error(format!("Could not update TodoList task: {error}")),
@@ -1128,8 +1169,8 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.20",
-    instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, update_task, add_task_attachment, and add_task_image omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments, and images metadata. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. add_task_attachment and add_task_image copy an existing regular file from an absolute source_path on this MCP host into channel-specific managed storage; they do not accept URLs or base64, never modify or delete the source, and require the latest task expected_version plus a stable request_id reused only for an identical retry. File content is never returned. File removal, opening, and preview remain desktop-only; this server has no such tools. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
+    version = "0.2.21",
+    instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, update_task, add_task_attachment, and add_task_image omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments and images metadata plus localPath and localPathStatus for managed copies. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. add_task_attachment and add_task_image copy an existing regular file from an absolute source_path on this MCP host into channel-specific managed storage; they do not accept URLs or base64, never modify or delete the source, and require the latest task expected_version plus a stable request_id reused only for an identical retry. File content is never returned. A non-null localPath names a checked regular managed copy on this MCP host at response time; null with localPathStatus means the copy is missing, unsafe, or unavailable. A permitted local client file/image tool may read the path, but the path alone does not prove content was read, and remote clients may not share this filesystem. This server has no file-read, preview, removal, or desktop-open tool. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
 
@@ -1338,13 +1379,33 @@ mod tests {
             attachment_key,
         )
         .unwrap();
+        let expected_attachment_path = fs::canonicalize(&attachment_path).unwrap();
+        assert_eq!(attached["file"]["localPathStatus"], "available");
+        assert_eq!(
+            attached["file"]["localPath"],
+            expected_attachment_path.to_str().unwrap()
+        );
+        assert_eq!(
+            attached["task"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
+        assert_ne!(
+            attached["file"]["localPath"],
+            attachment_source.to_str().unwrap()
+        );
         assert_eq!(fs::read(&attachment_path).unwrap(), b"presentation bytes");
         assert_eq!(fs::read(&attachment_source).unwrap(), b"presentation bytes");
+        fs::remove_file(&attachment_source).unwrap();
 
         let replayed = result_json(server.add_task_attachment(Parameters(attachment_input())));
         assert_eq!(replayed["replayed"], true);
         assert_eq!(replayed["workspaceVersion"], attached["workspaceVersion"]);
         assert_eq!(replayed["file"]["id"], attached["file"]["id"]);
+        assert_eq!(replayed["file"]["localPath"], attached["file"]["localPath"]);
+        assert_eq!(
+            replayed["task"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
         assert_eq!(replayed["task"]["attachments"].as_array().unwrap().len(), 1);
 
         let imaged = result_json(server.add_task_image(Parameters(AddTaskFileInput {
@@ -1360,15 +1421,153 @@ mod tests {
             imaged["file"]["storageKey"].as_str().unwrap(),
         )
         .unwrap();
-        assert_eq!(fs::read(image_path).unwrap(), b"image bytes");
+        let expected_image_path = fs::canonicalize(&image_path).unwrap();
+        assert_eq!(imaged["file"]["localPathStatus"], "available");
+        assert_eq!(
+            imaged["file"]["localPath"],
+            expected_image_path.to_str().unwrap()
+        );
+        assert_eq!(
+            imaged["task"]["images"][0]["localPath"],
+            imaged["file"]["localPath"]
+        );
+        assert_ne!(imaged["file"]["localPath"], image_source.to_str().unwrap());
+        assert_eq!(fs::read(&image_path).unwrap(), b"image bytes");
         assert_eq!(fs::read(&image_source).unwrap(), b"image bytes");
+        fs::remove_file(&image_source).unwrap();
 
-        let read_back = result_json(server.get_task(Parameters(GetTaskInput { task_id })));
+        let image_replay = result_json(server.add_task_image(Parameters(AddTaskFileInput {
+            task_id: task_id.clone(),
+            expected_version: 2,
+            source_path: image_source.to_string_lossy().into_owned(),
+            request_id: "attach-diagram".into(),
+        })));
+        assert_eq!(image_replay["replayed"], true);
+        assert_eq!(
+            image_replay["file"]["localPath"],
+            imaged["file"]["localPath"]
+        );
+
+        let read_back = result_json(server.get_task(Parameters(GetTaskInput {
+            task_id: task_id.clone(),
+        })));
         assert_eq!(
             read_back["task"]["attachments"].as_array().unwrap().len(),
             1
         );
         assert_eq!(read_back["task"]["images"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            read_back["task"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
+        assert_eq!(
+            read_back["task"]["images"][0]["localPath"],
+            imaged["file"]["localPath"]
+        );
+        let list = result_json(server.list_tasks(Parameters(ListTasksInput {
+            project_id: Some("project-1".into()),
+            status: None,
+            include_done: None,
+            include_archived: None,
+            limit: None,
+            cursor: None,
+        })));
+        assert_eq!(
+            list["tasks"][0]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
+        assert_eq!(
+            list["tasks"][0]["images"][0]["localPath"],
+            imaged["file"]["localPath"]
+        );
+        let updated = result_json(
+            server.update_task(Parameters(
+                serde_json::from_value(json!({
+                    "task_id": task_id,
+                    "expected_version": 3,
+                    "title": "Files remain available"
+                }))
+                .unwrap(),
+            )),
+        );
+        assert_eq!(
+            updated["task"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
+        assert_eq!(
+            updated["task"]["images"][0]["localPath"],
+            imaged["file"]["localPath"]
+        );
+        let conflict = result_error(
+            server.update_task(Parameters(
+                serde_json::from_value(json!({
+                    "task_id": task_id,
+                    "expected_version": 1,
+                    "title": "Stale write"
+                }))
+                .unwrap(),
+            )),
+        );
+        assert!(conflict.contains("currentTask"));
+        let conflict: serde_json::Value =
+            serde_json::from_str(&conflict[conflict.find('{').unwrap()..]).unwrap();
+        assert_eq!(
+            conflict["currentTask"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
+        assert_eq!(
+            conflict["currentTask"]["images"][0]["localPath"],
+            imaged["file"]["localPath"]
+        );
+        let create_replay = result_json(server.create_task(Parameters(CreateTaskInput {
+            request_id: Some("file-import-task".into()),
+            project_id: "project-1".into(),
+            title: "Import files".into(),
+            description: None,
+            priority: None,
+            due_date: None,
+            tags: None,
+            subtasks: None,
+            acceptance_criteria: None,
+            dependencies: None,
+        })));
+        assert_eq!(create_replay["replayed"], true);
+        assert_eq!(
+            create_replay["task"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
+        assert_eq!(
+            create_replay["task"]["images"][0]["localPath"],
+            imaged["file"]["localPath"]
+        );
+        let persisted = server.store.load_workspace().unwrap().unwrap();
+        assert!(!serde_json::to_string(&persisted)
+            .unwrap()
+            .contains("localPath"));
+        let payloads = task_store_sqlite::managed_files::payloads_for_workspace(
+            &server.store.managed_files_root(),
+            &persisted,
+        )
+        .unwrap();
+        assert!(!serde_json::to_string(&payloads)
+            .unwrap()
+            .contains("localPath"));
+        assert!(expected_attachment_path
+            .starts_with(fs::canonicalize(server.store.managed_files_root()).unwrap()));
+        assert!(!expected_attachment_path.starts_with(untouched_store.managed_files_root()));
+        fs::remove_file(&image_path).unwrap();
+        let missing_copy = result_json(server.get_task(Parameters(GetTaskInput {
+            task_id: task_id.clone(),
+        })));
+        assert!(missing_copy["task"]["images"][0]["localPath"].is_null());
+        assert_eq!(
+            missing_copy["task"]["images"][0]["localPathStatus"],
+            "missing"
+        );
+        assert_eq!(
+            missing_copy["task"]["attachments"][0]["localPath"],
+            attached["file"]["localPath"]
+        );
         assert!(untouched_store
             .load_workspace()
             .unwrap()
@@ -1376,6 +1575,91 @@ mod tests {
             .tasks
             .is_empty());
         assert!(!untouched_store.managed_files_root().exists());
+    }
+
+    #[test]
+    fn unsafe_or_missing_managed_files_do_not_hide_the_task_or_expose_outside_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let database_path = root.path().join("channel/todolist.sqlite");
+        fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let store = SqliteTaskStore::open(&database_path).unwrap();
+        store
+            .save_workspace(&Workspace {
+                version: 1,
+                projects: vec![Project {
+                    id: "project-1".into(),
+                    name: "TodoList".into(),
+                    color: "#1264f4".into(),
+                }],
+                tasks: vec![],
+            })
+            .unwrap();
+        let server = TodoMcpServer::new(store);
+        let created = result_json(
+            server.create_task(Parameters(
+                serde_json::from_value(json!({
+                    "project_id": "project-1",
+                    "title": "Mixed files"
+                }))
+                .unwrap(),
+            )),
+        );
+        let task_id = created["task"]["id"].as_str().unwrap().to_string();
+        let source = root.path().join("good.txt");
+        fs::write(&source, b"managed bytes").unwrap();
+        let attached = result_json(server.add_task_attachment(Parameters(AddTaskFileInput {
+            task_id: task_id.clone(),
+            expected_version: 1,
+            source_path: source.to_string_lossy().into_owned(),
+            request_id: "good-file".into(),
+        })));
+        let good_path = attached["file"]["localPath"].as_str().unwrap().to_string();
+        let outside = root.path().join("outside-secret.txt");
+        fs::write(&outside, b"outside").unwrap();
+        let directory = server
+            .store
+            .managed_files_root()
+            .join("attachments/not-a-file");
+        fs::create_dir(&directory).unwrap();
+        server
+            .store
+            .mutate_workspace(|mut workspace| {
+                let task = &mut workspace.tasks[0];
+                let good = task.attachments[0].clone();
+                for (id, key) in [
+                    ("traversal", "../outside-secret.txt"),
+                    ("missing", "attachments/missing.txt"),
+                    ("directory", "attachments/not-a-file"),
+                    ("wrong-collection", "images/other.png"),
+                ] {
+                    let mut file = good.clone();
+                    file.id = id.into();
+                    file.storage_key = key.into();
+                    task.attachments.push(file);
+                }
+                task.version += 1;
+                workspace.version += 1;
+                Ok(workspace)
+            })
+            .unwrap();
+        let read = result_json(server.get_task(Parameters(GetTaskInput { task_id })));
+        assert_eq!(read["task"]["title"], "Mixed files");
+        let files = read["task"]["attachments"].as_array().unwrap();
+        assert_eq!(files[0]["localPath"], good_path);
+        for (id, status) in [
+            ("traversal", "unsafe"),
+            ("missing", "missing"),
+            ("directory", "unsafe"),
+            ("wrong-collection", "unsafe"),
+        ] {
+            let file = files.iter().find(|file| file["id"] == id).unwrap();
+            assert!(file["localPath"].is_null(), "{id}");
+            assert_eq!(file["localPathStatus"], status, "{id}");
+        }
+        assert!(!serde_json::to_string(&read)
+            .unwrap()
+            .contains(outside.to_str().unwrap()));
+        assert_eq!(fs::read(&outside).unwrap(), b"outside");
     }
 
     #[test]
@@ -1548,7 +1832,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("activity");
-        let projection = task_output(&task);
+        let projection = server.task_output(&task);
         assert_eq!(projection, expected_projection);
         let full_bytes = serde_json::to_vec(&full_value).unwrap().len();
         let projected_bytes = serde_json::to_vec(&projection).unwrap().len();

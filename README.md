@@ -23,6 +23,8 @@ TodoList 是本地优先的桌面任务应用。Windows 版可独立使用；用
 
 DeepSeek Harness 桌面版 0.2.0-rc.2 已由用户实际调用 TodoList MCP 的只读 `list_projects`。其余工具及写入操作尚未在该客户端实测。
 
+MCP 返回的附件和图片会在文件可用时附上托管副本的本机绝对路径。路径属于运行 MCP 的电脑；客户端仍需具备同机文件读取权限，拿到路径不表示已读取内容。文件缺失或不安全时返回空路径，MCP 本身不返回文件正文或图片数据。
+
 ## 数据位置
 
 Windows 新任务库优先使用用户主目录下的 `%USERPROFILE%\.todolist\app.todolist.desktop\todolist.sqlite`，托管附件位于同目录的 `managed-files`。如果已有安全可用的旧版 `%APPDATA%\app.todolist.desktop\todolist.sqlite`，应用继续使用旧库，不会静默搬迁或清空；路径重定向或数据冲突需要明确迁移。开发版使用独立的 `app.todolist.desktop.dev` 通道，桌面与开发 MCP 共用该通道且不会操作日常任务库。备份与文件规则见 [数据备份说明](docs/DATA_BACKUP.md)。

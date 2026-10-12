@@ -75,15 +75,22 @@ try {
   const current = decoded(await dsh.call("get_task", { task_id: task.id })).task;
   const attachInput = { task_id: task.id, expected_version: current.version, source_path: file, request_id: "one-attachment" };
   const attached = decoded(await dsh.call("add_task_attachment", attachInput)); assert.equal(attached.task.attachments.length, 1);
-  const retry = decoded(await dsh.call("add_task_attachment", attachInput)); assert.equal(retry.file.id, attached.file.id); assert.equal(retry.replayed, true);
+  assert.equal(attached.file.localPathStatus, "available");
+  assert.equal(attached.task.attachments[0].localPath, attached.file.localPath);
+  assert.equal((await readFile(attached.file.localPath, "utf8")), "source remains unchanged");
   assert.equal((await readFile(file, "utf8")), "source remains unchanged");
+  await rm(file);
+  const retry = decoded(await dsh.call("add_task_attachment", attachInput)); assert.equal(retry.file.id, attached.file.id); assert.equal(retry.replayed, true);
+  assert.equal(retry.file.localPath, attached.file.localPath);
   const history = decoded(await cc.call("get_task_activity", { task_id: task.id, limit: 1 })); assert.equal(history.activity[0].actor, "deepseek_harness"); assert.ok(history.nextCursor);
   const latest = decoded(await cc.call("get_task", { task_id: task.id })).task;
+  assert.equal(latest.attachments[0].localPath, attached.file.localPath);
   decoded(await cc.call("update_task", { task_id: task.id, expected_version: latest.version, tags: ["preserve source"] }));
   assert.ok((await cc.call("get_task_activity", { task_id: task.id, limit: 1, cursor: history.nextCursor })).isError);
   await dsh.close(); const restarted = start("deepseek_harness"); await initialize(restarted, "2026-07-28");
   const persisted = decoded(await restarted.call("get_task", { task_id: task.id })).task;
   assert.equal(persisted.source, "Codex 创建"); assert.equal(persisted.attachments.length, 1); assert.deepEqual(persisted.tags, ["preserve source"]);
+  assert.equal(persisted.attachments[0].localPath, attached.file.localPath);
   console.log("PASS: independent processes, shared isolated DB, client origins, scoped retry ids, atomic version conflict, stale cursors, attachment retry, restart persistence");
 } finally {
   await Promise.allSettled(clients.filter((c) => c.process.exitCode === null).map((c) => c.close()));

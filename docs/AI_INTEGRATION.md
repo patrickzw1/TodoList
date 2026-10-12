@@ -20,6 +20,8 @@ Switching clients preserves each client's manual draft, checked paths and errors
 
 The shared Skill retains version rereads, stable request IDs, conflict handling, compact task output, attachment import and explicit paginated activity reads. CC and DSH add only their Skill discovery and permission guidance. No `allowed-tools`, permissions allowlist, trust bypass or client approval is added by the Skill.
 
+MCP task and file results include runtime-only `localPath` and `localPathStatus` for each attachment/image. An available path points to the current channel's checked managed copy on the **MCP host**; a missing, unsafe or unavailable copy has a null path. No path is stored in SQLite or backups, and no file content is returned. Codex, CC or DSH may use a separate permitted local file/image tool to read a path only if that client can access the same host filesystem. Receiving a path does not prove the content was read, and remote clients cannot assume that access. TodoList MCP itself has no file-read, preview, removal or desktop-open tool.
+
 ## Ownership, backups and failures
 
 Codex retains its existing managed-marker/command migration rules and complete legacy tool-list upgrades. Custom restricted tool lists are preserved. Empty old arguments can be explicitly updated to add the client origin; unknown arguments are a conflict.

@@ -45,8 +45,8 @@ impl Client {
     fn skill(self) -> String {
         let adapter = match self {
             Self::Codex => "",
-            Self::ClaudeCode => "\n## Claude Code adapter\n\nDiscover this personal Skill as /todolist-mcp. MCP tools are named mcp__todolist__<tool>; use the actual discovered tools. Respect Claude Code tool approvals and managed restrictions. This Skill declares no allowed-tools and grants no permissions. Reconnect MCP or restart Claude Code after configuring; use /reload-skills when adding a new Skill root.\n",
-            Self::DeepseekHarness => "\n## DeepSeek Harness adapter\n\nDiscover todolist-mcp through the harness Skill tools and its user Skill root. MCP tools are named mcp__todolist__<tool>; use the actual discovered tools. Keep harness permission approvals in force. The active profile must resolve @deepseek-ai/dsh-mcp-client. Restart the harness after changing the home patch; registration alone does not prove that the active profile loaded the plugin or connected.\n",
+            Self::ClaudeCode => "\n## Claude Code adapter\n\nDiscover this personal Skill as /todolist-mcp. MCP tools are named mcp__todolist__<tool>; use the actual discovered tools. A returned localPath belongs to the MCP host; read it only with a separately permitted tool on that same filesystem. Respect Claude Code tool approvals and managed restrictions. This Skill declares no allowed-tools and grants no permissions. Reconnect MCP or restart Claude Code after configuring; use /reload-skills when adding a new Skill root.\n",
+            Self::DeepseekHarness => "\n## DeepSeek Harness adapter\n\nDiscover todolist-mcp through the harness Skill tools and its user Skill root. MCP tools are named mcp__todolist__<tool>; use the actual discovered tools. A returned localPath belongs to the MCP host; read it only with a separately permitted tool on that same filesystem. Keep harness permission approvals in force. The active profile must resolve @deepseek-ai/dsh-mcp-client. Restart the harness after changing the home patch; registration alone does not prove that the active profile loaded the plugin or connected.\n",
         };
         format!("{CORE_SKILL}{adapter}")
     }
@@ -983,6 +983,17 @@ pub fn remove_ai_integration(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_client_skill_explains_managed_local_paths_without_granting_access() {
+        for client in [Client::Codex, Client::ClaudeCode, Client::DeepseekHarness] {
+            let skill = client.skill();
+            assert!(skill.contains("localPath"), "{}", client.label());
+            assert!(skill.contains("MCP host"), "{}", client.label());
+            assert!(skill.contains("permission"), "{}", client.label());
+        }
+    }
+
     fn fixture(root: &Path, client: Client) -> Paths {
         let directory = root.join(client.id());
         fs::create_dir_all(&directory).unwrap();

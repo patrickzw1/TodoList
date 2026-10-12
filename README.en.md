@@ -23,6 +23,8 @@ In **Connections & Permissions**, select Codex, Claude Code, or DeepSeek Harness
 
 A user successfully invoked the read-only TodoList MCP `list_projects` tool in DeepSeek Harness desktop 0.2.0-rc.2. Other tools and write operations have not been tested in that client.
 
+MCP attachment and image results include the managed copy's absolute local path when that file is available. The path belongs to the computer running the MCP server; the client still needs permission to read files on that host, and receiving a path does not mean the content was read. Missing or unsafe files have a null path. MCP does not return file or image content.
+
 ## Data location
 
 On Windows, a new workspace prefers `%USERPROFILE%\.todolist\app.todolist.desktop\todolist.sqlite`. Managed attachments are stored in `managed-files` beside the database. When an existing legacy `%APPDATA%\app.todolist.desktop\todolist.sqlite` is safe to use, the app continues using it without silently moving or clearing it. Redirected paths or conflicting data require an explicit migration. Development builds use the separate `app.todolist.desktop.dev` channel; the development desktop and MCP share that channel and do not operate on the daily workspace. See [Data backup](docs/DATA_BACKUP.md) for backup and file rules.

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { copyFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const tempDirectory = await mkdtemp(join(tmpdir(), "todolist-mcp-smoke-"));
@@ -107,7 +107,7 @@ try {
   });
   const initialized = await waitFor(1);
   if (initialized.error) throw new Error(JSON.stringify(initialized.error));
-  for (const capability of ["add_task_attachment", "add_task_image", "absolute source_path", "removal", "preview"]) {
+  for (const capability of ["add_task_attachment", "add_task_image", "absolute source_path", "localPath", "removal", "preview"]) {
     if (!initialized.result.instructions?.includes(capability)) throw new Error(`Missing MCP capability guidance: ${capability}`);
   }
 
@@ -123,6 +123,7 @@ try {
   }
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
   if (!tools.get("get_task")?.description?.includes("attachments/images")) throw new Error("File metadata is not documented in get_task");
+  if (!tools.get("list_tasks")?.description?.includes("localPath")) throw new Error("Managed copy paths are not documented in list_tasks");
   if (!tools.get("get_task_activity")?.description?.includes("newest entries first")) throw new Error("History ordering is not documented in get_task_activity");
   const historyLimitSchema = tools.get("get_task_activity")?.inputSchema?.properties?.limit;
   if (historyLimitSchema?.minimum !== 1 || historyLimitSchema?.maximum !== 50) throw new Error("History limit schema is not bounded to 1..50");
@@ -153,10 +154,18 @@ try {
   if ((await readFile(managedAttachment, "utf8")) !== "attachment source" || (await readFile(attachmentSource, "utf8")) !== "attachment source") {
     throw new Error("Attachment copy or source preservation failed");
   }
+  if (attached.file.localPathStatus !== "available" || !isAbsolute(attached.file.localPath) ||
+      attached.file.localPath === attachmentSource ||
+      (await readFile(attached.file.localPath, "utf8")) !== "attachment source" ||
+      attached.task.attachments[0].localPath !== attached.file.localPath) {
+    throw new Error("Attachment did not return its readable managed copy path");
+  }
+  await rm(attachmentSource);
   const attachmentReplay = toolJson(await callTool("add_task_attachment", {
     task_id: "task-a", expected_version: 1, source_path: attachmentSource, request_id: "stdio-attachment",
   }));
-  if (!attachmentReplay.replayed || attachmentReplay.file.id !== attached.file.id || attachmentReplay.task.attachments.length !== 1) {
+  if (!attachmentReplay.replayed || attachmentReplay.file.id !== attached.file.id ||
+      attachmentReplay.file.localPath !== attached.file.localPath || attachmentReplay.task.attachments.length !== 1) {
     throw new Error("Attachment retry was not idempotent");
   }
   const imaged = toolJson(await callTool("add_task_image", {
@@ -167,11 +176,22 @@ try {
   if ((await readFile(managedImage, "utf8")) !== "image source" || (await readFile(imageSource, "utf8")) !== "image source") {
     throw new Error("Image copy or source preservation failed");
   }
+  if (imaged.file.localPathStatus !== "available" || !isAbsolute(imaged.file.localPath) ||
+      imaged.file.localPath === imageSource ||
+      (await readFile(imaged.file.localPath, "utf8")) !== "image source" ||
+      imaged.task.images[0].localPath !== imaged.file.localPath) {
+    throw new Error("Image did not return its readable managed copy path");
+  }
+  await rm(imageSource);
 
   const firstPage = toolJson(await callTool("list_tasks", { project_id: "project-1", limit: 1 }));
   const initial = toolJson(await callTool("list_tasks", { project_id: "project-1" }));
   if (initial.tasks.map((item) => item.id).join(",") !== "task-a,task-b") throw new Error("Unexpected initial task order");
   if (initial.tasks.some((item) => "activity" in item)) throw new Error("Normal task output still contains activity");
+  if (initial.tasks[0].attachments[0].localPath !== attached.file.localPath ||
+      initial.tasks[0].images[0].localPath !== imaged.file.localPath) {
+    throw new Error("List results lost managed copy paths");
+  }
   const history = toolJson(await callTool("get_task_activity", { task_id: "task-a", limit: 1 }));
   if (history.activity[0]?.actor !== "codex" || !history.nextCursor) throw new Error("Task history is not newest-first and paginated");
   const reordered = toolJson(await callTool("reorder_tasks", {
