@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
-import { boundedActivity, taskWithUserActivity } from "../src/task-activity.ts";
+import { boundedActivity, completionTime, taskWithUserActivity } from "../src/task-activity.ts";
 import { validateWorkspaceCompletion } from "../src/task-validation.ts";
 import { importedWorkspaceForSave } from "../src/workspace-backup.ts";
 import { checklistEditorEdit, checklistEditsOnLatest } from "../src/task-checklists.ts";
@@ -72,7 +72,7 @@ function driver({ desktop = true, desktopHostWithoutBridge = false, cacheFails =
   };
   const dependencies = {
     react, "@tauri-apps/api/core": { invoke }, "./seed": { seedWorkspace: fixture() },
-    "./task-activity": { boundedActivity }, "./task-validation": { validateWorkspaceCompletion },
+    "./task-activity": { boundedActivity, completionTime }, "./task-validation": { validateWorkspaceCompletion },
   };
   const exports = {};
   const source = ts.transpileModule(readFileSync(new URL("../src/workspace-store.ts", import.meta.url), "utf8"), {
@@ -278,6 +278,25 @@ for (const action of ["完成任务", "状态更新为已完成", "从便签完�
     assert.equal(run.calls.filter((command) => command === "save_workspace").length, 1);
   });
 }
+
+test("GUI conflict replay preserves a newer MCP completion while editing another field", async () => {
+  const completedAt = "2026-10-20T08:12:34Z";
+  const run = driver({ beforeSave(database) {
+    database.version++;
+    database.tasks[0].version++;
+    database.tasks[0].status = "done";
+    database.tasks[0].completedAt = completedAt;
+  } });
+  const hook = await run.mount();
+  hook.commit((current) => ({ ...current, version: current.version + 1,
+    tasks: current.tasks.map((task) => taskWithUserActivity(task, "编辑任务", { description: "GUI edit" })),
+  }));
+  const saved = await run.flush();
+  assert.equal(saved.storageState, "merged");
+  assert.equal(run.database.tasks[0].status, "done");
+  assert.equal(run.database.tasks[0].completedAt, completedAt);
+  assert.equal(run.database.tasks[0].description, "GUI edit");
+});
 
 test("conflict replay still preserves unrelated MCP changes when acceptance is confirmed", async () => {
   const run = driver({ beforeSave(database) {

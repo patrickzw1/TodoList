@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use task_core::{ActivityItem, ManagedFile, Workspace, MAX_SAFE_INTEGER};
+use task_core::{ActivityItem, ManagedFile, TaskStatus, Workspace, MAX_SAFE_INTEGER};
 
 pub mod managed_files;
 pub mod storage_path;
@@ -34,6 +34,25 @@ pub struct OptionalMutationResult {
 }
 
 impl SqliteTaskStore {
+    fn reconcile_completion_times(updated: &mut Workspace, previous: Option<&Workspace>) {
+        for task in &mut updated.tasks {
+            let old = previous
+                .and_then(|workspace| workspace.tasks.iter().find(|item| item.id == task.id));
+            match (old.map(|item| &item.status), &task.status) {
+                (Some(TaskStatus::Done), TaskStatus::Done) => {
+                    task.completed_at = old.and_then(|item| item.completed_at.clone());
+                }
+                (Some(_), TaskStatus::Done) => {
+                    if task.completed_at.is_none() {
+                        task.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                    }
+                }
+                (_, TaskStatus::Done) => task.backfill_completed_at(),
+                _ => task.completed_at = None,
+            }
+        }
+    }
+
     pub fn open(database_path: impl AsRef<Path>) -> Result<Self, String> {
         let store = Self {
             database_path: database_path.as_ref().to_path_buf(),
@@ -477,6 +496,7 @@ impl SqliteTaskStore {
                 let mut workspace: Workspace =
                     serde_json::from_str(&value).map_err(|error| error.to_string())?;
                 workspace.trim_activity();
+                workspace.backfill_completed_at();
                 Ok(workspace)
             })
             .transpose()
@@ -485,7 +505,6 @@ impl SqliteTaskStore {
     pub fn save_workspace(&self, workspace: &Workspace) -> Result<(), String> {
         let mut bounded_workspace = workspace.clone();
         bounded_workspace.trim_activity();
-        bounded_workspace.validate()?;
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -500,6 +519,8 @@ impl SqliteTaskStore {
             }
             bounded_workspace.validate_completion_changes(&current)?;
         }
+        Self::reconcile_completion_times(&mut bounded_workspace, current.as_ref());
+        bounded_workspace.validate()?;
         Self::persist_transaction(&transaction, &bounded_workspace, current.as_ref())?;
         transaction.commit().map_err(|error| error.to_string())
     }
@@ -542,6 +563,7 @@ impl SqliteTaskStore {
             task.version = next_version;
         }
         restored.trim_activity();
+        restored.backfill_completed_at();
         restored.validate()?;
         // Restoring a legacy backup preserves its data; subsequent completion
         // transitions are still checked by every ordinary write path.
@@ -564,6 +586,7 @@ impl SqliteTaskStore {
         })?;
         let mut updated = mutate(current.clone())?;
         updated.trim_activity();
+        Self::reconcile_completion_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -597,6 +620,7 @@ impl SqliteTaskStore {
             });
         }
         updated.trim_activity();
+        Self::reconcile_completion_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -657,6 +681,7 @@ impl SqliteTaskStore {
         })?;
         let mut updated = mutate(current.clone())?;
         updated.trim_activity();
+        Self::reconcile_completion_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -752,6 +777,60 @@ impl SqliteTaskStore {
 mod tests {
     use super::*;
     use task_core::{ActivityItem, Priority, Project, Task, TaskStatus, MAX_TASK_ACTIVITY_ITEMS};
+
+    #[test]
+    fn completion_timestamp_survives_sqlite_edits_and_backup_restore() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SqliteTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let mut workspace: Workspace = serde_json::from_value(serde_json::json!({
+            "version": 1, "projects": [{"id":"p","name":"P","color":"#fff"}],
+            "tasks": [{"id":"t","projectId":"p","title":"Task","description":"","status":"todo","priority":"medium",
+                "dueLabel":"Due","dueDate":"2026-10-01","tags":[],"source":"user","pinned":false,"version":1,
+                "subtasks":[],"acceptanceCriteria":[],"dependencies":[],"activity":[]}]
+        })).unwrap();
+        store.save_workspace(&workspace).unwrap();
+        workspace.version += 1;
+        workspace.tasks[0].version += 1;
+        workspace.tasks[0].status = TaskStatus::Done;
+        store.save_workspace(&workspace).unwrap();
+        let mut saved = store.load_workspace().unwrap().unwrap();
+        let first = saved.tasks[0]
+            .completed_at
+            .clone()
+            .expect("completion recorded");
+        assert!(chrono::DateTime::parse_from_rfc3339(&first).is_ok());
+        assert_eq!(saved.tasks[0].due_date, "2026-10-01");
+        saved.version += 1;
+        saved.tasks[0].version += 1;
+        saved.tasks[0].title = "Edited".into();
+        saved.tasks[0].archived = true;
+        saved.tasks[0].completed_at = None; // An older whole-task client must not erase it.
+        store.save_workspace(&saved).unwrap();
+        let mut saved = store.load_workspace().unwrap().unwrap();
+        assert_eq!(saved.tasks[0].completed_at.as_deref(), Some(first.as_str()));
+        let backup = saved.clone();
+        saved.version += 1;
+        saved.tasks[0].version += 1;
+        saved.tasks[0].status = TaskStatus::Todo;
+        store.save_workspace(&saved).unwrap();
+        assert_eq!(
+            store.load_workspace().unwrap().unwrap().tasks[0].completed_at,
+            None
+        );
+        let mut restored = backup;
+        restored.version = saved.version + 1;
+        let restored = store.restore_workspace(&restored).unwrap();
+        assert_eq!(
+            restored.tasks[0].completed_at.as_deref(),
+            Some(first.as_str())
+        );
+        assert_eq!(restored.tasks[0].due_date, "2026-10-01");
+        let mut legacy_backup = restored;
+        legacy_backup.version += 1;
+        legacy_backup.tasks[0].completed_at = None;
+        let unknown = store.restore_workspace(&legacy_backup).unwrap();
+        assert_eq!(unknown.tasks[0].completed_at, None);
+    }
 
     #[test]
     fn restore_clock_migrates_legacy_versions_and_retains_versions_of_removed_tasks() {
@@ -982,6 +1061,7 @@ mod tests {
                     title: "Import".into(),
                     description: String::new(),
                     status: TaskStatus::Todo,
+                    completed_at: None,
                     priority: Priority::Medium,
                     due_label: "未安排".into(),
                     due_date: "9999-12-31".into(),
@@ -1065,6 +1145,7 @@ mod tests {
                     title: "Task".into(),
                     description: String::new(),
                     status: TaskStatus::Todo,
+                    completed_at: None,
                     priority: Priority::Medium,
                     due_label: "Today".into(),
                     due_date: "2026-09-04".into(),

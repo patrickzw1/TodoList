@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { seedWorkspace } from "./seed";
-import { boundedActivity } from "./task-activity";
+import { boundedActivity, completionTime } from "./task-activity";
 import { validateWorkspaceCompletion } from "./task-validation";
 import type { Task, Workspace } from "./types";
 
@@ -90,6 +90,7 @@ function normalizeWorkspace(workspace: Workspace): Workspace {
       ...task,
       archived: task.archived ?? false,
       activity: boundedActivity(task.activity ?? []),
+      completedAt: completionTime({ ...task, activity: task.activity ?? [] }),
       acceptanceCriteria: (task.acceptanceCriteria as unknown[]).map((criterion, index) => typeof criterion === "string"
         ? { id: `legacy-${task.id}-${index}`, title: criterion, completed: false }
         : criterion as Task["acceptanceCriteria"][number]),

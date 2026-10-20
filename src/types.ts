@@ -41,6 +41,7 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  completedAt?: string | null;
   priority: Priority;
   dueLabel: string;
   dueDate: string;

@@ -69,6 +69,8 @@ test("reordering a visible project subset preserves hidden and unrelated task sl
     ],
   };
   current.tasks[1].description = "does not match the search";
+  current.tasks[0].status = "done";
+  current.tasks[0].completedAt = "2026-10-20T06:12:34Z";
   const reordered = reorderTaskSubset(
     current,
     "source",
@@ -82,6 +84,7 @@ test("reordering a visible project subset preserves hidden and unrelated task sl
   ]);
   assert.deepEqual(reordered.tasks.find((item) => item.id === "other"), current.tasks[2]);
   assert.deepEqual(reordered.tasks.find((item) => item.id === "archived"), current.tasks[4]);
+  assert.deepEqual(reordered.tasks.find((item) => item.id === "visible-a"), current.tasks[0]);
 });
 
 test("reordering rejects stale scope and skips no-op revisions", () => {

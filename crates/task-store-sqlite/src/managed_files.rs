@@ -271,6 +271,7 @@ mod tests {
                 title: "T".into(),
                 description: String::new(),
                 status: TaskStatus::Todo,
+                completed_at: None,
                 priority: Priority::Medium,
                 due_label: "未安排".into(),
                 due_date: "9999-12-31".into(),

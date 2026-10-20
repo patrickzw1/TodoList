@@ -34,6 +34,21 @@ test("TodoList backup round trips its metadata and workspace", () => {
   assert.deepEqual(parsed.managedFiles, []);
 });
 
+test("backup preserves completedAt and leaves unrecorded legacy completion unknown", () => {
+  const fixture = workspace();
+  fixture.tasks[0].status = "done";
+  fixture.tasks[0].completedAt = "2026-10-20T14:12:34+08:00";
+  const restored = parseWorkspaceBackup(JSON.stringify(createWorkspaceBackup(fixture)));
+  assert.equal(restored.workspace.tasks[0].completedAt, fixture.tasks[0].completedAt);
+  assert.equal(restored.workspace.tasks[0].dueDate, "9999-12-31");
+  delete fixture.tasks[0].completedAt;
+  assert.equal(parseWorkspaceBackup(JSON.stringify(createWorkspaceBackup(fixture))).workspace.tasks[0].completedAt, null);
+  for (const invalid of ["", "2026-10-20 14:12:34", "2026-02-30T12:00:00Z", "2026-10-20T24:00:00Z"]) {
+    fixture.tasks[0].completedAt = invalid;
+    assert.throws(() => createWorkspaceBackup(fixture), /任务完成时间/);
+  }
+});
+
 test("legacy backups remain readable and managed file keys can be remapped without changing metadata", async () => {
   const { remapManagedFileStorageKeys } = await import("../src/workspace-backup.ts");
   const legacy = createWorkspaceBackup(workspace());

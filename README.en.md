@@ -14,6 +14,7 @@ Main features:
 
 - Today, In Progress, All, project, and Archived views; lists, boards, search within the current view, and task ordering.
 - Task details, subtasks, acceptance criteria, attachments, images, and activity history; multi-selection, archiving, and confirmed permanent deletion.
+- Completed tasks retain a timezone-aware completion time. Details show local date and time, while completed rows show the local completion date; legacy tasks with no reliable time say it was not recorded.
 - A separate task note that you can pin above other windows; JSON backup and restore; local SQLite storage.
 - Version checks and replay of explicit user actions when the desktop UI and MCP change the workspace concurrently.
 

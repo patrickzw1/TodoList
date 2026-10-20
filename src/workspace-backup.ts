@@ -1,4 +1,4 @@
-import { boundedActivity } from "./task-activity.ts";
+import { boundedActivity, completionTime, isCompletionTimestamp } from "./task-activity.ts";
 import type { AcceptanceCriterion, ActivityItem, ManagedFile, Project, Subtask, Task, Workspace } from "./types";
 
 export const BACKUP_SCHEMA_VERSION = 2;
@@ -108,6 +108,7 @@ function taskFrom(value: unknown, index: number): Task {
     title: text(item.title, "任务标题"),
     description: text(item.description, "任务描述"),
     status: choice(item.status, ["todo", "in_progress", "blocked", "done"] as const, "任务状态"),
+    completedAt: item.completedAt === undefined || item.completedAt === null ? null : text(item.completedAt, "任务完成时间"),
     priority: choice(item.priority, ["low", "medium", "high"] as const, "任务优先级"),
     dueLabel: text(item.dueLabel, "任务日期标签"),
     dueDate: text(item.dueDate, "任务日期"),
@@ -124,6 +125,8 @@ function taskFrom(value: unknown, index: number): Task {
     activity: boundedActivity(array(item.activity, "活动记录").map(activityFrom)),
   };
   if (!task.id.trim() || !task.title.trim()) throw new Error("备份中存在空的任务 ID 或标题");
+  if (task.completedAt != null && !isCompletionTimestamp(task.completedAt)) throw new Error("任务完成时间必须是有效且包含时区的时间");
+  task.completedAt = completionTime(task);
   return task;
 }
 

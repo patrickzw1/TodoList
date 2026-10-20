@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, formatActivityTime, taskWithUserActivity } from "../src/task-activity.ts";
+import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, completionTime, formatActivityTime, taskDateLabel, taskWithUserActivity } from "../src/task-activity.ts";
 import { resolveDefaultProjectId } from "../src/task-creation.ts";
 import { searchTasks, tasksForView } from "../src/task-filtering.ts";
 import { applyChecklistEditorEdit, checklistEditorEdit } from "../src/task-checklists.ts";
@@ -15,6 +15,35 @@ function makeTask(activity = []) {
     version: 1, subtasks: [], acceptanceCriteria: [], dependencies: [], activity,
   };
 }
+
+test("completion time follows status transitions and survives unrelated edits", () => {
+  const first = taskWithUserActivity(makeTask(), "完成任务", { status: "done" }, new Date("2026-10-20T06:12:34Z"));
+  assert.equal(first.completedAt, "2026-10-20T06:12:34.000Z");
+  assert.equal(taskDateLabel(first), `${new Date(first.completedAt).getFullYear()}-${String(new Date(first.completedAt).getMonth() + 1).padStart(2, "0")}-${String(new Date(first.completedAt).getDate()).padStart(2, "0")} 完成`);
+  const edited = taskWithUserActivity(first, "编辑任务", { title: "Edited", dueDate: "2026-01-01" }, new Date("2026-10-21T00:00:00Z"));
+  assert.equal(edited.completedAt, first.completedAt);
+  assert.equal(taskWithUserActivity(edited, "完成任务", { status: "done" }).completedAt, first.completedAt);
+  assert.equal(taskWithUserActivity(edited, "归档任务", { archived: true }).completedAt, first.completedAt);
+  assert.equal(edited.dueDate, "2026-01-01");
+  assert.doesNotMatch(taskDateLabel(edited), /逾期/);
+  const reopened = taskWithUserActivity(edited, "重新打开任务", { status: "todo" });
+  assert.equal(reopened.completedAt, null);
+  const second = taskWithUserActivity(reopened, "状态更新为已完成", { status: "done" }, new Date("2026-10-22T09:01:02Z"));
+  assert.equal(second.completedAt, "2026-10-22T09:01:02.000Z");
+});
+
+test("legacy completion recovery requires an explicit current-cycle event with timezone", () => {
+  const event = { id: "e", action: "完成任务", actor: "user", at: "2026-10-20T06:12:34Z" };
+  const legacy = { ...makeTask([event]), status: "done" };
+  assert.equal(completionTime(legacy), event.at);
+  assert.equal(completionTime({ ...legacy, activity: [event, { ...event, id: "edit", action: "更新子任务" }] }), event.at);
+  assert.equal(completionTime({ ...legacy, activity: [event, { ...event, id: "edit", action: "编辑任务" }] }), null);
+  assert.equal(completionTime({ ...legacy, activity: [{ ...event, at: "2026-10-20 14:12" }] }), null);
+  assert.equal(completionTime({ ...legacy, activity: [event, { ...event, action: "重新打开任务" }] }), null);
+  assert.equal(completionTime({ ...legacy, activity: [event, { ...event, action: "Codex 更新任务" }] }), null);
+  assert.equal(completionTime({ ...legacy, activity: [] }), null);
+  assert.equal(taskDateLabel({ ...legacy, activity: [] }), "已完成（时间未记录）");
+});
 
 test("project colors keep presets, include named bright red, and normalize supported custom HEX values", () => {
   assert.equal(PROJECT_COLORS.length, 7);

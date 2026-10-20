@@ -916,6 +916,7 @@ impl TodoMcpServer {
             title: input.title.clone(),
             description: input.description.clone().unwrap_or_default(),
             status: TaskStatus::Todo,
+            completed_at: None,
             priority: input.priority.unwrap_or(PriorityInput::Medium).into(),
             due_label: due_label(&due_date),
             due_date,
@@ -1095,6 +1096,11 @@ impl TodoMcpServer {
             }
             if let Some(status) = input.status {
                 task.status = status.into();
+                if completing_task {
+                    task.completed_at = Some(chrono::Utc::now().to_rfc3339());
+                } else if !matches!(task.status, TaskStatus::Done) {
+                    task.completed_at = None;
+                }
                 changed = true;
             }
             if let Some(priority) = input.priority {
@@ -1169,7 +1175,7 @@ impl TodoMcpServer {
 
 #[tool_handler(
     name = "todolist",
-    version = "0.2.21",
+    version = "0.2.22",
     instructions = "TodoList is a local-first task app. Normal task results from list_tasks, get_task, create_task, update_task, add_task_attachment, and add_task_image omit activity history to keep reads compact while retaining all other task fields, versions, checklist ids, dependencies, attachments and images metadata plus localPath and localPathStatus for managed copies. Do not call get_task_activity by default; use it only when the user asks to trace a task's history, request only the needed limit, and follow nextCursor as needed. Its cursor becomes stale after that task changes, so restart without it. add_task_attachment and add_task_image copy an existing regular file from an absolute source_path on this MCP host into channel-specific managed storage; they do not accept URLs or base64, never modify or delete the source, and require the latest task expected_version plus a stable request_id reused only for an identical retry. File content is never returned. A non-null localPath names a checked regular managed copy on this MCP host at response time; null with localPathStatus means the copy is missing, unsafe, or unavailable. A permitted local client file/image tool may read the path, but the path alone does not prove content was read, and remote clients may not share this filesystem. This server has no file-read, preview, removal, or desktop-open tool. Never claim that a path written in a description attaches a file. Read current data before writing and follow list_tasks nextCursor when the full result matters. A list_tasks cursor becomes stale after any workspace change; restart without it. For create_project and create_task, pass a stable unique request_id and reuse it only to retry identical input. For update_task, pass the task's latest version as expected_version. For reorder_tasks, read every page for one project and archived state, pass every stable task id exactly once, and use the latest workspaceVersion. After a task or workspace conflict, re-read current data and preserve newer user changes. Reordering changes only shared order, never task fields or task versions. Never reopen a completed task unless the user explicitly requested it and allow_reopen_completed is true. MCP-created tasks are never pinned and this server never opens the desktop note."
 )]
 impl ServerHandler for TodoMcpServer {}
@@ -1270,6 +1276,87 @@ mod tests {
             .into_iter()
             .find(|task| task.id == task_id)
             .expect("seeded task remains")
+    }
+
+    #[test]
+    fn mcp_completion_timestamp_is_returned_and_follows_status_cycles() {
+        let (server, database_path) = test_server();
+        let task = result_json(
+            server.create_task(Parameters(
+                serde_json::from_value(json!({
+                    "project_id": "project-1", "title": "Completion"
+                }))
+                .unwrap(),
+            )),
+        )["task"]
+            .clone();
+        let id = task["id"].as_str().unwrap();
+        let mut stale_gui = server.store.load_workspace().unwrap().unwrap();
+        let done = result_json(
+            server.update_task(Parameters(
+                serde_json::from_value(json!({
+                    "task_id": id, "expected_version": task["version"], "status": "done"
+                }))
+                .unwrap(),
+            )),
+        );
+        let first = done["task"]["completedAt"]
+            .as_str()
+            .expect("MCP returns completion time")
+            .to_string();
+        assert!(chrono::DateTime::parse_from_rfc3339(&first).is_ok());
+        assert!(done["task"].get("activity").is_none());
+        stale_gui.version += 1;
+        stale_gui.tasks[0].version += 1;
+        stale_gui.tasks[0].description = "GUI edit".into();
+        assert!(server
+            .store
+            .save_workspace(&stale_gui)
+            .unwrap_err()
+            .contains("workspace version conflict"));
+        let mut replayed_gui = server.store.load_workspace().unwrap().unwrap();
+        replayed_gui.version += 1;
+        replayed_gui.tasks[0].version += 1;
+        replayed_gui.tasks[0].description = "GUI edit".into();
+        replayed_gui.tasks[0].completed_at = None;
+        server.store.save_workspace(&replayed_gui).unwrap();
+        let latest = server.store.load_workspace().unwrap().unwrap();
+        assert_eq!(
+            latest.tasks[0].completed_at.as_deref(),
+            Some(first.as_str())
+        );
+        let edit = result_json(
+            server.update_task(Parameters(
+                serde_json::from_value(json!({
+                    "task_id": id, "expected_version": latest.tasks[0].version, "title": "Edited", "status": "done"
+                }))
+                .unwrap(),
+            )),
+        );
+        assert_eq!(edit["task"]["completedAt"], first);
+        let denied = server.update_task(Parameters(
+            serde_json::from_value(json!({
+                "task_id": id, "expected_version": edit["task"]["version"], "status": "todo"
+            }))
+            .unwrap(),
+        ));
+        assert_eq!(denied.is_error, Some(true));
+        let reopened = result_json(server.update_task(Parameters(serde_json::from_value(json!({
+            "task_id": id, "expected_version": edit["task"]["version"], "status": "todo", "allow_reopen_completed": true
+        })).unwrap())));
+        assert!(reopened["task"]["completedAt"].is_null());
+        let recompleted = result_json(
+            server.update_task(Parameters(
+                serde_json::from_value(json!({
+                    "task_id": id, "expected_version": reopened["task"]["version"], "status": "done"
+                }))
+                .unwrap(),
+            )),
+        );
+        assert!(recompleted["task"]["completedAt"].as_str().is_some());
+        assert_ne!(recompleted["task"]["completedAt"], first);
+        drop(server);
+        remove_database(&database_path);
     }
 
     #[test]
@@ -1676,6 +1763,7 @@ mod tests {
             title: "Files".into(),
             description: String::new(),
             status: TaskStatus::Todo,
+            completed_at: None,
             priority: Priority::Medium,
             due_label: "未安排".into(),
             due_date: UNSCHEDULED_DUE_DATE.into(),

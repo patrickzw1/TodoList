@@ -101,6 +101,8 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
+    #[serde(default)]
+    pub completed_at: Option<String>,
     pub priority: Priority,
     pub due_label: String,
     pub due_date: String,
@@ -122,6 +124,42 @@ pub struct Task {
 }
 
 impl Task {
+    /// Only an explicit completion event with an offset can date a legacy
+    /// completed task. An unknown event may hide a later status cycle.
+    pub fn backfill_completed_at(&mut self) {
+        if self.status != TaskStatus::Done {
+            self.completed_at = None;
+            return;
+        }
+        if self.completed_at.is_some() {
+            return;
+        }
+        for item in self.activity.iter().rev() {
+            match item.action.as_str() {
+                "完成任务" | "状态更新为已完成" | "从便签完成任务" => {
+                    self.completed_at = chrono::DateTime::parse_from_rfc3339(&item.at)
+                        .ok()
+                        .map(|time| time.to_rfc3339());
+                    return;
+                }
+                "创建任务"
+                | "更新子任务"
+                | "更新验收标准"
+                | "置顶到桌面"
+                | "取消桌面置顶"
+                | "归档任务"
+                | "恢复归档任务"
+                | "批量归档任务"
+                | "项目删除前转移任务"
+                | "添加图片"
+                | "添加附件"
+                | "移除图片"
+                | "移除附件" => {}
+                _ => return,
+            }
+        }
+    }
+
     pub fn push_activity(&mut self, item: ActivityItem) {
         self.activity.push(item);
         self.trim_activity();
@@ -251,8 +289,21 @@ impl Workspace {
         }
     }
 
+    pub fn backfill_completed_at(&mut self) {
+        for task in &mut self.tasks {
+            task.backfill_completed_at();
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         for task in &self.tasks {
+            if task
+                .completed_at
+                .as_ref()
+                .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+            {
+                return Err(format!("task {} has an invalid completedAt", task.id));
+            }
             if !self
                 .projects
                 .iter()
@@ -280,6 +331,7 @@ mod tests {
                 title: "Task".into(),
                 description: String::new(),
                 status: TaskStatus::Todo,
+                completed_at: None,
                 priority: Priority::Medium,
                 due_label: "Today".into(),
                 due_date: "2026-09-01".into(),
@@ -334,6 +386,7 @@ mod tests {
             title: "Task".into(),
             description: String::new(),
             status: TaskStatus::Todo,
+            completed_at: None,
             priority: Priority::Medium,
             due_label: "Today".into(),
             due_date: "2026-09-04".into(),
@@ -369,6 +422,7 @@ mod tests {
             title: id.into(),
             description: String::new(),
             status: TaskStatus::Todo,
+            completed_at: None,
             priority: Priority::Medium,
             due_label: "Today".into(),
             due_date: "2026-09-07".into(),
@@ -499,6 +553,37 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["a", "b"]
         );
+    }
+    #[test]
+    fn legacy_completion_requires_explicit_current_cycle_event_with_offset() {
+        let mut task = task("t", "p", false);
+        task.status = TaskStatus::Done;
+        task.backfill_completed_at();
+        assert_eq!(task.completed_at, None);
+        task.activity.push(ActivityItem {
+            id: "done".into(),
+            action: "完成任务".into(),
+            actor: "user".into(),
+            at: "2026-10-20T14:12:34+08:00".into(),
+        });
+        task.backfill_completed_at();
+        assert_eq!(
+            task.completed_at.as_deref(),
+            Some("2026-10-20T14:12:34+08:00")
+        );
+        task.completed_at = None;
+        task.activity.push(ActivityItem {
+            id: "edit".into(),
+            action: "编辑任务".into(),
+            actor: "user".into(),
+            at: "2026-10-21T00:00:00Z".into(),
+        });
+        task.backfill_completed_at();
+        assert_eq!(task.completed_at, None);
+        task.activity.pop();
+        task.activity[0].at = "2026-10-20 14:12".into();
+        task.backfill_completed_at();
+        assert_eq!(task.completed_at, None);
     }
 }
 /// Origin is selected by the local MCP launcher, never by tool input or clientInfo.

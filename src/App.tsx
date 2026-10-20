@@ -10,8 +10,8 @@ import { hasAIIntegrationUpdate, sidebarAIIntegrationPresentation, type AIIntegr
 import { DataBackupCard } from "./DataBackupCard";
 import { TaskFileSections } from "./TaskFiles";
 import { SoftwareUpdateCard, SoftwareUpdateProvider, useSoftwareUpdate } from "./SoftwareUpdateCard";
-import { isOverdue, localIsoDate, taskDueLabel, todayHeading } from "./date-utils";
-import { activityItemsForDetail, formatActivityTime, taskWithUserActivity } from "./task-activity";
+import { isOverdue, localIsoDate, todayHeading } from "./date-utils";
+import { activityItemsForDetail, completionDateTime, completionTime, formatActivityTime, taskDateLabel, taskWithUserActivity } from "./task-activity";
 import { resolveDefaultProjectId } from "./task-creation";
 import { searchTasks, tasksForView, type TaskListView } from "./task-filtering";
 import { ConfirmDialog, NoticeDialog, ProjectDeletionDialog, ProjectEditorDialog, TaskEditorDialog, type TaskEdits } from "./dialogs";
@@ -126,7 +126,7 @@ function TaskRow({ task, project, selected, multiSelected, dragging, dropPositio
   onReorderPointerLost: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onReorderKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
 }) {
-  const dueLabel = taskDueLabel(task.dueDate, task.dueLabel);
+  const dueLabel = taskDateLabel(task);
   return (
     <div className={`task-row ${selected ? "selected" : ""} ${multiSelected ? "multi-selected" : ""} ${dragging ? "is-reordering" : ""} ${dropPosition ? `drop-${dropPosition}` : ""}`} data-task-id={task.id} data-project-id={task.projectId} data-archived={String(task.archived)} role="button" tabIndex={0} onClick={onSelect} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(); }}>
       <button
@@ -333,7 +333,7 @@ function BoardColumn({ status, projects, tasks, isDropTarget, draggingTaskId, on
           return (
             <div className={`board-card ${draggingTaskId === task.id ? "is-dragging" : ""}`} role="button" tabIndex={0} key={task.id} onPointerDown={(event) => onPointerDown(event, task, project)} onPointerMove={onPointerMove} onPointerUp={(event) => onPointerEnd(event)} onPointerCancel={(event) => onPointerEnd(event, true)} onClick={() => onSelect(task.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(task.id); }}>
               <span className="board-card-title"><StatusButton task={task} onToggle={() => onToggle(task.id)} />{task.title}</span>
-              <span className="board-card-meta"><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name} · {taskDueLabel(task.dueDate, task.dueLabel)}</span>
+              <span className="board-card-meta"><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name} · {taskDateLabel(task)}</span>
               <select className="board-status-select" value={task.status} onClick={(event) => event.stopPropagation()} onChange={(event) => onStatusChange(task.id, event.target.value as TaskStatus)} aria-label={`修改 ${task.title} 的状态`}><option value="todo">待开始</option><option value="in_progress">进行中</option><option value="blocked">已阻塞</option><option value="done">已完成</option></select>
             </div>
           );
@@ -359,7 +359,7 @@ function BoardView({ projects, tasks, onSelect, onToggle, onStatusChange }: {
     if (event.button !== 0 || (event.target as Element).closest("button, select")) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragSession.current = { taskId: task.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, width: bounds.width, title: task.title, meta: `${project.name} · ${taskDueLabel(task.dueDate, task.dueLabel)}`, active: false };
+    dragSession.current = { taskId: task.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, width: bounds.width, title: task.title, meta: `${project.name} · ${taskDateLabel(task)}`, active: false };
   };
   const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     const session = dragSession.current;
@@ -422,6 +422,7 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
   const [detailExpanded, setDetailExpanded] = useState(false);
   const scrollbar = useAutoHideScrollbar<HTMLDivElement>();
   const visibleActivity = activityItemsForDetail(task.activity, activityExpanded);
+  const completedAt = completionTime(task);
   useEffect(() => setActivityExpanded(false), [task.id]);
   return (
     <aside className={`detail-panel ${detailExpanded ? "is-expanded" : ""} ${closing ? "is-closing" : ""}`}>
@@ -432,6 +433,7 @@ function TaskDetail({ task, project, tasks, closing, onClose, onEdit, onToggle, 
       <div className="detail-scroll auto-hide-scrollbar" role="region" aria-label="任务详情内容" tabIndex={0} {...scrollbar}>
       <dl className="task-meta">
         <div><dt>状态</dt><dd><span className={`state-dot ${task.status}`} />{statusLabel[task.status]}</dd></div>
+        {task.status === "done" && <div><dt>完成时间</dt><dd>{completedAt ? <time dateTime={completedAt}>{completionDateTime(completedAt)}</time> : "已完成（时间未记录）"}</dd></div>}
         <div><dt>优先级</dt><dd>{task.priority === "high" && <ArrowUp className="priority-arrow" />} {task.priority === "high" ? "高" : task.priority === "medium" ? "中" : "低"}</dd></div>
         <div><dt>项目</dt><dd><span className="project-chip"><i className="project-color-dot" style={{ backgroundColor: project.color }} />{project.name}</span></dd></div>
         <div><dt>来源</dt><dd>{task.source}</dd></div>
@@ -999,7 +1001,7 @@ function StickyApp() {
         {!loaded ? <div className="sticky-empty"><strong>{ready ? "无法读取本地任务" : "正在读取本地任务"}</strong><span>{ready ? storageMessage : "请稍候"}</span>{ready && <button type="button" onClick={() => void refresh()}>重试读取</button>}</div> : pinnedTasks.length ? pinnedTasks.map((task) => (
           <article className={`sticky-task ${task.status === "done" ? "completed" : ""}`} key={task.id}>
             <StatusButton task={task} onToggle={() => toggleTask(task.id)} />
-            <div><strong>{task.title}</strong><span>{workspace.projects.find((project) => project.id === task.projectId)?.name} · {taskDueLabel(task.dueDate, task.dueLabel, currentDate)}</span></div>
+            <div><strong>{task.title}</strong><span>{workspace.projects.find((project) => project.id === task.projectId)?.name} · {taskDateLabel(task, currentDate)}</span></div>
             <button className="sticky-unpin" onClick={() => unpin(task.id)} title="取消置顶"><PushPinSlash /></button>
           </article>
         )) : <div className="sticky-empty"><PushPin /><strong>还没有置顶任务</strong><span>在任务行点亮图钉即可置顶</span></div>}
