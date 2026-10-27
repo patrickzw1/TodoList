@@ -1,0 +1,5 @@
+/crates/todolist-mcp/tests/fixtures/*.pdf binary
+/crates/todolist-mcp/tests/fixtures/*.docx binary
+/crates/todolist-mcp/tests/fixtures/*.pptx binary
+/crates/todolist-mcp/tests/fixtures/*.xlsx binary
+/crates/todolist-mcp/tests/fixtures/*.png binary

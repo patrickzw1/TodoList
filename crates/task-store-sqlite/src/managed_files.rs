@@ -12,6 +12,17 @@ use uuid::Uuid;
 
 pub const MAX_MANAGED_FILE_BYTES: u64 = 100 * 1024 * 1024;
 
+pub fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedFilePayload {
@@ -97,7 +108,7 @@ pub fn resolve_storage_key(root: &Path, storage_key: &str) -> Result<PathBuf, St
     }
     for directory in [root.to_path_buf(), root.join(folder)] {
         if let Ok(metadata) = fs::symlink_metadata(&directory) {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            if is_link(&metadata) || !metadata.is_dir() {
                 return Err("Managed file directories must not be links".into());
             }
         }
@@ -116,7 +127,7 @@ pub fn import_into_root(root: &Path, source: &Path, kind: &str) -> Result<Manage
     }
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("Could not read the selected file: {error}"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    if is_link(&metadata) || !metadata.is_file() {
         return Err("The selected item is not a regular file".to_string());
     }
     if metadata.len() > MAX_MANAGED_FILE_BYTES {
@@ -182,10 +193,7 @@ pub fn payloads_for_workspace(
         let path = resolve_storage_key(root, storage_key)?;
         let metadata = fs::symlink_metadata(&path)
             .map_err(|_| format!("Managed file '{storage_key}' is missing"))?;
-        if metadata.file_type().is_symlink()
-            || !metadata.is_file()
-            || metadata.len() > MAX_MANAGED_FILE_BYTES
-        {
+        if is_link(&metadata) || !metadata.is_file() || metadata.len() > MAX_MANAGED_FILE_BYTES {
             return Err(format!("Managed file '{storage_key}' is unavailable"));
         }
         payloads.push(ManagedFilePayload {
@@ -255,6 +263,36 @@ pub fn restore_payloads(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_directory_junction_before_resolving_managed_content() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("managed-files");
+        let outside = fixture.path().join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "synthetic outside content").unwrap();
+        let junction = root.join("attachments");
+        let result = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(is_link(&fs::symlink_metadata(&junction).unwrap()));
+        assert!(resolve_storage_key(&root, "attachments/secret.txt").is_err());
+        fs::remove_dir(&junction).unwrap();
+        assert_eq!(
+            fs::read_to_string(outside.join("secret.txt")).unwrap(),
+            "synthetic outside content"
+        );
+    }
     use task_core::{Priority, Project, Task, TaskStatus};
 
     fn workspace_with(file: ManagedFile) -> Workspace {

@@ -37,7 +37,7 @@ const LEGACY_MCP_TOOLS_V3: [&str; 8] = [
     "update_task",
     "reorder_tasks",
 ];
-const MCP_TOOLS: [&str; 10] = [
+const LEGACY_MCP_TOOLS_V4: [&str; 10] = [
     "list_projects",
     "create_project",
     "list_tasks",
@@ -48,6 +48,25 @@ const MCP_TOOLS: [&str; 10] = [
     "add_task_image",
     "update_task",
     "reorder_tasks",
+];
+const MCP_TOOLS: [&str; 17] = [
+    "list_projects",
+    "create_project",
+    "list_tasks",
+    "get_task",
+    "get_task_activity",
+    "create_task",
+    "add_task_attachment",
+    "add_task_image",
+    "update_task",
+    "reorder_tasks",
+    "task_stats",
+    "batch_update",
+    "list_task_files",
+    "remove_task_files",
+    "read_task_file",
+    "search_file_content",
+    "workspace_info",
 ];
 
 #[derive(Clone)]
@@ -192,6 +211,7 @@ fn configured_tools_legacy(document: &DocumentMut) -> bool {
     configured_tools_match(document, &LEGACY_MCP_TOOLS_V1)
         || configured_tools_match(document, &LEGACY_MCP_TOOLS_V2)
         || configured_tools_match(document, &LEGACY_MCP_TOOLS_V3)
+        || configured_tools_match(document, &LEGACY_MCP_TOOLS_V4)
 }
 
 fn missing_managed_tools(document: &DocumentMut) -> Vec<&'static str> {
@@ -753,7 +773,7 @@ mod tests {
             updated.updated_items,
             vec![
                 "新版使用说明",
-                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image、reorder_tasks）"
+                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image、reorder_tasks、task_stats、batch_update、list_task_files、remove_task_files、read_task_file、search_file_content、workspace_info）"
             ]
         );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
@@ -797,7 +817,7 @@ mod tests {
             outdated.pending_updates,
             vec![
                 "新版使用说明",
-                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image）"
+                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image、task_stats、batch_update、list_task_files、remove_task_files、read_task_file、search_file_content、workspace_info）"
             ]
         );
 
@@ -807,7 +827,7 @@ mod tests {
             updated.updated_items,
             vec![
                 "新版使用说明",
-                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image）"
+                "工具列表（新增 get_task_activity、add_task_attachment、add_task_image、task_stats、batch_update、list_task_files、remove_task_files、read_task_file、search_file_content、workspace_info）"
             ]
         );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
@@ -847,7 +867,7 @@ mod tests {
             outdated.pending_updates,
             vec![
                 "新版使用说明",
-                "工具列表（新增 add_task_attachment、add_task_image）"
+                "工具列表（新增 add_task_attachment、add_task_image、task_stats、batch_update、list_task_files、remove_task_files、read_task_file、search_file_content、workspace_info）"
             ]
         );
 
@@ -857,7 +877,7 @@ mod tests {
             updated.updated_items,
             vec![
                 "新版使用说明",
-                "工具列表（新增 add_task_attachment、add_task_image）"
+                "工具列表（新增 add_task_attachment、add_task_image、task_stats、batch_update、list_task_files、remove_task_files、read_task_file、search_file_content、workspace_info）"
             ]
         );
         let configured = fs::read_to_string(&paths.codex_config).unwrap();
@@ -879,7 +899,7 @@ mod tests {
         fs::write(
             &paths.codex_config,
             format!(
-                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"add_task_image\", \"add_task_attachment\", \"get_task_activity\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\"]\n",
+                "[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [\"reorder_tasks\", \"add_task_image\", \"add_task_attachment\", \"get_task_activity\", \"update_task\", \"create_task\", \"get_task\", \"list_tasks\", \"create_project\", \"list_projects\", \"workspace_info\", \"search_file_content\", \"read_task_file\", \"remove_task_files\", \"list_task_files\", \"batch_update\", \"task_stats\"]\n",
                 display_path(&paths.mcp_executable)
             ),
         )
@@ -891,6 +911,63 @@ mod tests {
         assert!(configured_tools_current(
             &read_document(&paths.codex_config).unwrap()
         ));
+    }
+
+    #[test]
+    fn upgrades_owned_ten_tools_but_keeps_a_restricted_new_list() {
+        for complete_legacy in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = test_paths(root.path());
+            fs::create_dir_all(paths.codex_config.parent().unwrap()).unwrap();
+            install_skill(&paths).unwrap();
+            write_managed_command(&paths).unwrap();
+            // A current Skill plus a shorter allowlist is a user restriction.
+            // Only the old managed Skill and complete legacy set prove an upgrade.
+            if complete_legacy {
+                fs::write(
+                    paths.skill_directory.join("SKILL.md"),
+                    "old managed version",
+                )
+                .unwrap();
+            }
+            let names: Vec<_> = if complete_legacy {
+                LEGACY_MCP_TOOLS_V4.to_vec()
+            } else {
+                MCP_TOOLS
+                    .iter()
+                    .copied()
+                    .filter(|name| *name != "batch_update")
+                    .collect()
+            };
+            let tools = names
+                .iter()
+                .map(|s| format!("{s:?}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            fs::write(&paths.codex_config, format!("[mcp_servers.todolist]\ncommand = {:?}\nenabled_tools = [{tools}]\ncustom_setting = \"keep\"\n", display_path(&paths.mcp_executable))).unwrap();
+            let before = fs::read_to_string(&paths.codex_config).unwrap();
+            let status = inspect(&paths).unwrap();
+            if complete_legacy {
+                assert_eq!(status.state, "update_available");
+                assert!(status
+                    .pending_updates
+                    .iter()
+                    .any(|s| s.contains("read_task_file")));
+            } else {
+                assert!(!status
+                    .pending_updates
+                    .iter()
+                    .any(|s| s.starts_with("工具列表")));
+            }
+            configure(&paths).unwrap();
+            let after = fs::read_to_string(&paths.codex_config).unwrap();
+            if complete_legacy {
+                assert!(configured_tools_current(&after.parse().unwrap()));
+                assert!(after.contains("custom_setting = \"keep\""));
+            } else {
+                assert_eq!(before, after);
+            }
+        }
     }
 
     #[test]

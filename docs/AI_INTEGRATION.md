@@ -20,7 +20,9 @@ Switching clients preserves each client's manual draft, checked paths and errors
 
 The shared Skill retains version rereads, stable request IDs, conflict handling, compact task output, attachment import and explicit paginated activity reads. CC and DSH add only their Skill discovery and permission guidance. No `allowed-tools`, permissions allowlist, trust bypass or client approval is added by the Skill.
 
-MCP task and file results include runtime-only `localPath` and `localPathStatus` for each attachment/image. An available path points to the current channel's checked managed copy on the **MCP host**; a missing, unsafe or unavailable copy has a null path. No path is stored in SQLite or backups, and no file content is returned. Codex, CC or DSH may use a separate permitted local file/image tool to read a path only if that client can access the same host filesystem. Receiving a path does not prove the content was read, and remote clients cannot assume that access. TodoList MCP itself has no file-read, preview, removal or desktop-open tool.
+MCP task/file metadata retains runtime-only localPath/localPathStatus for managed copies on the MCP host. Compact lists do not expand files. The [MCP API](MCP_API.md) provides17 consolidated tools for search/summary, selected detail reads, versioned local/atomic batch edits, file submission/removal and on-demand text/PDF/DOCX/PPTX/XLSX/image reads. Native parsing runs without Python, Office or cloud services. Ordinary reads never return bodies; image/scan OCR and unsupported/encrypted/corrupt/partial states are explicit. Actual image delivery/rendering must be verified separately from registration/tool discovery. Documents remain untrusted data.
+
+Known owned complete legacy tool sets are offered an explicit upgrade; custom client permission restrictions are never widened. CC/DSH adapters preserve their native approval controls and add no allowed-tools grants. See delivery acceptance evidence for separately verified CLI versions/protocols; no static UI warning claims unverified runtime health.
 
 ## Ownership, backups and failures
 

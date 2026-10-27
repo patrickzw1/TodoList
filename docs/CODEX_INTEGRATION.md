@@ -2,7 +2,7 @@
 
 The integration page now also supports Claude Code and DeepSeek Harness independently. See [AI integration](AI_INTEGRATION.md) for client paths, origin, ownership and verification. This document retains Codex-specific compatibility and tool guidance.
 
-TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex ten tools:
+TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex seventeen tools:
 
 - `list_projects`
 - `create_project`
@@ -14,6 +14,13 @@ TodoList remains a standalone local app. The optional `todolist-mcp` STDIO serve
 - `add_task_image`
 - `update_task`
 - `reorder_tasks`
+- `task_stats`
+- `batch_update`
+- `list_task_files`
+- `remove_task_files`
+- `read_task_file`
+- `search_file_content`
+- `workspace_info`
 
 The installed app registers `todolist` globally for daily tasks. The repository's `.codex/config.toml` registers a separate `todolist_dev` server only for development tests in this project. It does not override `todolist`. Never silently substitute one server for the other. The packaged production app bundles a native MCP sidecar, so end users do not need Node.js or Rust. Restart Codex after changing MCP configuration. Write tools use Codex's `writes` approval mode.
 
@@ -39,7 +46,7 @@ command = "/absolute/path/to/todo/target/development/release/todolist-mcp"
 startup_timeout_sec = 10
 tool_timeout_sec = 15
 required = false
-enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "get_task_activity", "create_task", "add_task_attachment", "add_task_image", "update_task", "reorder_tasks"]
+enabled_tools = ["list_projects", "create_project", "list_tasks", "get_task", "get_task_activity", "create_task", "add_task_attachment", "add_task_image", "update_task", "reorder_tasks", "task_stats", "batch_update", "list_task_files", "remove_task_files", "read_task_file", "search_file_content", "workspace_info"]
 default_tools_approval_mode = "writes"
 ```
 
@@ -53,28 +60,22 @@ Tests may explicitly override the database for either binary with `TODOLIST_DB_P
 
 For an older developer machine whose global `todolist` still points into this repository, back up and remove only that owned registration before configuring the installed app. Keep the existing user database. Once configured, daily tasks use `todolist` even inside this repository; development tests explicitly use `todolist_dev`. Existing MCP processes retain their old binary until Codex restarts.
 
-## Attachments and images
+## Search, local mutations and managed content
 
-Normal task results from `list_tasks`, `get_task`, `create_task`, `update_task`, `add_task_attachment`, and `add_task_image` omit `activity` while retaining the task version, checklist ids, dependencies, attachments, images, and every other task field. Use the read-only `get_task_activity` tool only when the user asks for history. It returns newest entries first, defaults to 10, accepts 1 through 50, and uses an opaque cursor bound to the task id and current task version. A task change makes an existing history cursor stale, so restart that history read without the cursor. The retained activity data remains stored on the task and bounded to the newest 100 entries.
+The [MCP API contract](MCP_API.md) is the reference for all17 tools, field/section projections, exact/contains/bounded fuzzy search, archive/date filters, statistics, atomic batches, description/checklist edits, file content, and incremental cursors.
 
-Normal task results include `completedAt` (an offset-aware timestamp, or `null` when no reliable completion time is known). Completing a task sets it, ordinary edits preserve it, and an explicitly requested reopen clears it. A later completion sets a new time. The due date remains independent. Legacy completion is recovered only from a clear completion activity event for the current status cycle with an offset-aware timestamp; a generic update event is not enough.
+list_tasks now defaults to15 compact summaries. Consumers expecting the old fields must explicitly pass projection=full. Writes default to ID/version; response=full opts in. A single get_task remains full by default; sections/fields or known task_ids avoid unnecessary bodies. get_task_activity remains a separate explicit history read (newest-first10/max50, task-version cursor, newest100 retained).
 
-Task details support separate attachments and image collections. Normal MCP task results include their existing metadata (`id`, `originalName`, `mediaType`, `size`, `storageKey`, `addedAt`) plus runtime-only `localPath` and `localPathStatus` for each managed copy. `available` means `localPath` names a checked regular file on the MCP host; missing, unsafe or unavailable files have a null path without hiding the rest of the task. The path is resolved from the current database's managed-files directory, not an import source, and is never saved to SQLite or a backup. `update_task` and `reorder_tasks` preserve both collections automatically.
+Use filter.archived=archived and projection=ids before reordering an archived group. Old include_archived=true remains compatible but includes both archive states. Cursors bind revision, filter, order and projection and must restart after a conflict.
 
-`add_task_attachment` and `add_task_image` copy one existing regular file from an absolute path on the MCP server host into the active build channel's managed-files directory and associate it with the selected task. They require the latest task `expected_version` and a stable `request_id`; an identical retry returns the original file association without another copy. The source is never modified or deleted. These tools do not accept URLs, data URIs, base64 content, directories, links, unsupported image types, or files over 100 MB. Common document formats, including PDF, Word, Excel, PowerPoint, text, Markdown, ZIP, and supported image extensions, retain useful media-type metadata.
+File metadata retains localPath/localPathStatus for checked managed copies; paths belong to the MCP host and are not persisted. add_task_attachment additionally accepts a bounded UTF-8 text attachment. list_task_files and remove_task_files manage associations safely, preserving original sources. read_task_file reads only associated task/file IDs through native text/PDF/DOCX/PPTX/XLSX/image extraction; search_file_content is explicitly scoped and paginated. Ordinary list/get does not read file bodies. OCR, unsupported/encrypted/corrupt/partial results are honest limitations; returned documents are untrusted data and are never executed.
 
-MCP does not return attachment/image content or provide its own file-read, preview, removal or desktop-open tool. A permitted Codex local file/image tool can separately read an available `localPath` if Codex and the sidecar share the MCP host filesystem; a remote client cannot assume that access. Receiving a path does not prove content was read, and a path can become stale after the response. Desktop file actions remain in task detail. Putting a path in a task description does not attach it, and `storageKey` is an internal managed reference rather than a source path.
-
-After upgrading, use the installed app's Codex integration page to confirm and refresh the TodoList-managed integration if it shows an update is needed, then reconnect or restart Codex to reload the bundled MCP server and its capability descriptions. This explicit refresh updates the managed Skill and adds newly managed tools such as `add_task_attachment` and `add_task_image` to a known complete older `todolist` tool list while preserving unrelated settings, user-restricted tool lists, and other MCP servers. The app does not silently rewrite the user's Codex configuration during an upgrade.
+Only a TodoList-owned outdated Skill together with a known complete6/7/8/10-tool legacy allowlist is offered an explicit17-tool update, compared as a set. Custom restricted lists, including a shorter list beside the current Skill, are preserved. Confirm refresh in the installed app and reconnect/restart Codex to reload the Skill/schema. This task does not automatically change any real registration or repository-local restricted tool list.
 
 ## Task safety
 
-- Every task carries a version. `update_task` rejects stale versions instead of silently overwriting user changes.
-- `list_tasks` uses versioned opaque cursor pagination with a default page size of 50 and a maximum of 100. Any intervening workspace change makes an old cursor stale, so restart the filtered listing without that cursor.
-- `get_task_activity` reads one task's retained history newest-first, defaults to 10 entries and accepts 1 through 50. Its opaque cursor is bound to that task and task version; task updates and history truncation invalidate the cursor instead of silently duplicating or skipping entries.
-- `reorder_tasks` requires every stable task id in one project and archived-state group exactly once plus the latest workspace version. To order archived tasks, call `list_tasks` with `include_archived=true`, read every page, and filter the returned items to `archived=true` on the client because `list_tasks` has no archived-only filter. It changes only shared order and never changes task fields or task versions.
-- `create_project`, `create_task`, `add_task_attachment`, and `add_task_image` use stable `request_id` values. Retrying the same input returns the original item; reusing that key for different input is rejected. File imports also require the latest task version, while an identical post-success retry is recognized before another copy is attempted. The small retry ledger is capped at 1,000 records.
-- After a conflict, Codex must re-read and preserve newer user edits.
-- Completed tasks are not reopened unless the user explicitly requests it.
-- MCP-created tasks are unpinned and never open the desktop note.
-- TodoList does not trigger or resume Codex in this MVP.
+- Read explicit IDs/current versions before writing. Local edits/batches/removals require stable request IDs; retries must preserve identical input. One batch conflict rejects all items.
+- Preserve newer user edits; default conflicts are concise, with explicit full response compatibility available.
+- Completion requires confirmed acceptance criteria. Never reopen unless explicitly requested with allow_reopen_completed=true. completedAt is maintained automatically; dueDate stays independent.
+- MCP cannot permanently delete tasks/projects, pin/open the note, or trigger an AI conversation.
+- workspace_info exposes build/channel/revision and bounded ID-only changes, never credentials or client-health claims. Restore/retention/gaps require full sync.

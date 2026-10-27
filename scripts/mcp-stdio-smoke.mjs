@@ -82,6 +82,8 @@ async function waitFor(id) {
 
 let requestId = 2;
 async function callTool(name, args) {
+  if (["create_task", "update_task", "add_task_attachment", "add_task_image"].includes(name)) args = { response: "full", ...args };
+  if (name === "list_tasks") args = { projection: "full", ...args };
   const id = ++requestId;
   send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
   const response = await waitFor(id);
@@ -107,7 +109,7 @@ try {
   });
   const initialized = await waitFor(1);
   if (initialized.error) throw new Error(JSON.stringify(initialized.error));
-  for (const capability of ["add_task_attachment", "add_task_image", "absolute source_path", "localPath", "removal", "preview"]) {
+  for (const capability of ["compact", "read_task_file", "untrusted", "requiresFullSync", "request_id"]) {
     if (!initialized.result.instructions?.includes(capability)) throw new Error(`Missing MCP capability guidance: ${capability}`);
   }
 
@@ -117,13 +119,13 @@ try {
   if (listed.error) throw new Error(JSON.stringify(listed.error));
 
   const toolNames = listed.result.tools.map((tool) => tool.name).sort();
-  const expected = ["add_task_attachment", "add_task_image", "create_project", "create_task", "get_task", "get_task_activity", "list_projects", "list_tasks", "reorder_tasks", "update_task"];
+  const expected = ["batch_update", "task_stats", "list_task_files", "remove_task_files", "read_task_file", "search_file_content", "workspace_info", "add_task_attachment", "add_task_image", "create_project", "create_task", "get_task", "get_task_activity", "list_projects", "list_tasks", "reorder_tasks", "update_task"].sort();
   if (JSON.stringify(toolNames) !== JSON.stringify(expected)) {
     throw new Error(`Unexpected tools: ${toolNames.join(", ")}`);
   }
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
-  if (!tools.get("get_task")?.description?.includes("attachments/images")) throw new Error("File metadata is not documented in get_task");
-  if (!tools.get("list_tasks")?.description?.includes("localPath")) throw new Error("Managed copy paths are not documented in list_tasks");
+  if (!tools.get("get_task")?.description?.includes("sections")) throw new Error("File metadata is not documented in get_task");
+  if (!tools.get("list_tasks")?.description?.includes("compact")) throw new Error("Managed copy paths are not documented in list_tasks");
   if (!tools.get("get_task_activity")?.description?.includes("newest entries first")) throw new Error("History ordering is not documented in get_task_activity");
   const historyLimitSchema = tools.get("get_task_activity")?.inputSchema?.properties?.limit;
   if (historyLimitSchema?.minimum !== 1 || historyLimitSchema?.maximum !== 50) throw new Error("History limit schema is not bounded to 1..50");

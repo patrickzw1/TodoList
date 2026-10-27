@@ -1,6 +1,6 @@
 {
   "name": "todolist",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +15,8 @@
     "preview": "vite preview",
     "test:mcp-stdio": "node scripts/mcp-stdio-smoke.mjs",
     "test:mcp-multiclient": "node scripts/mcp-multiclient-smoke.mjs",
+    "test:mcp-enhancements": "node scripts/mcp-enhancement-smoke.mjs",
+    "test:mcp-client-images": "node scripts/mcp-client-image-probe.mjs",
     "test:release-automation": "node tests/release-automation.test.mjs",
     "test:release-powershell": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release-powershell-parse.test.ps1",
     "test:channels": "node --test tests/build-channels.test.mjs",

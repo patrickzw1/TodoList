@@ -1,6 +1,6 @@
 [package]
 name = "todolist-mcp"
-version = "0.2.22"
+version = "0.2.23"
 edition = "2021"
 description = "Local stdio MCP server for TodoList"
 
@@ -9,7 +9,11 @@ production = ["task-store-sqlite/production"]
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+lopdf = { version = "0.46", default-features = false }
+quick-xml = "0.42"
 rmcp = { version = "3", features = ["server", "macros", "schemars", "transport-io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -17,8 +21,7 @@ sha2 = "0.10"
 task-core = { path = "../task-core" }
 task-diagnostics = { path = "../task-diagnostics" }
 task-store-sqlite = { path = "../task-store-sqlite" }
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
-
-[dev-dependencies]
-tempfile = "3"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }

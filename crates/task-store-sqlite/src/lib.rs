@@ -5,6 +5,7 @@ use task_core::{ActivityItem, ManagedFile, TaskStatus, Workspace, MAX_SAFE_INTEG
 
 pub mod managed_files;
 pub mod storage_path;
+pub mod sync;
 
 const MAX_IDEMPOTENCY_RECORDS: i64 = 1_000;
 
@@ -85,6 +86,7 @@ impl SqliteTaskStore {
             )
             .map_err(|error| error.to_string())?;
         Self::migrate(&connection)?;
+        sync::initialize(&connection)?;
         connection
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS managed_file_cleanup (storage_key TEXT PRIMARY KEY);",
@@ -469,6 +471,17 @@ impl SqliteTaskStore {
         transaction.commit().map_err(|error| error.to_string())
     }
 
+    /// A successful cleanup pass may retain files held open by another process.
+    pub fn managed_file_cleanup_pending(&self) -> Result<bool, String> {
+        self.connection()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM managed_file_cleanup)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
     pub fn load_workspace_version(&self) -> Result<Option<u64>, String> {
         let connection = self.connection()?;
         connection
@@ -567,6 +580,7 @@ impl SqliteTaskStore {
         restored.validate()?;
         // Restoring a legacy backup preserves its data; subsequent completion
         // transitions are still checked by every ordinary write path.
+        sync::reset(&transaction)?;
         Self::persist_transaction(&transaction, &restored, current.as_ref())?;
         transaction.commit().map_err(|error| error.to_string())?;
         Ok(restored)
@@ -756,6 +770,7 @@ impl SqliteTaskStore {
                 params![high_water],
             )
             .map_err(|error| error.to_string())?;
+        sync::record(transaction, workspace, previous)?;
         let payload = serde_json::to_string(workspace).map_err(|error| error.to_string())?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

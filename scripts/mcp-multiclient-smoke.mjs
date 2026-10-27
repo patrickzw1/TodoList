@@ -51,14 +51,14 @@ async function initialize(client, protocolVersion) {
   const result = await client.request("initialize", { protocolVersion, capabilities: {}, clientInfo: { name: "model_claims_to_be_codex", version: "1" } });
   client.process.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   const tools = await client.request("tools/list", {});
-  assert.equal(tools.tools.length, 10); assert.ok(tools.tools.some((t) => t.name === "get_task_activity"));
-  console.log(`${client.client ?? "generic"}: protocol ${result.protocolVersion}, 10 tools`);
+  assert.equal(tools.tools.length, 17); assert.ok(tools.tools.some((t) => t.name === "get_task_activity"));
+  console.log(`${client.client ?? "generic"}: protocol ${result.protocolVersion}, 17 tools`);
 }
 try {
   const codex = start("codex"), cc = start("claude_code"), dsh = start("deepseek_harness"), generic = start();
   await Promise.all([initialize(codex, "2025-06-18"), initialize(cc, "2025-06-18"), initialize(dsh, "2026-07-28"), initialize(generic, "2025-06-18")]);
   const created = await Promise.all([codex, cc, dsh, generic].map(async (client) => {
-    const input = { project_id: "p", title: `${client.client ?? "generic"} task`, request_id: "same-request-id" };
+    const input = { response: "full", project_id: "p", title: `${client.client ?? "generic"} task`, request_id: "same-request-id" };
     const task = decoded(await client.call("create_task", input)).task;
     const expectedLabel = { codex: "Codex", claude_code: "Claude Code", deepseek_harness: "DeepSeek Harness" }[client.client] ?? "AI";
     assert.equal(task.source, `${expectedLabel} 创建`); assert.equal(task.pinned, false);
@@ -73,7 +73,7 @@ try {
   assert.equal(race.filter((r) => !r.isError).length, 1); assert.equal(race.filter((r) => r.isError && r.content[0].text.includes("version_conflict")).length, 1);
   assert.ok((await codex.call("list_tasks", { project_id: "p", cursor: list.nextCursor, limit: 1 })).isError);
   const current = decoded(await dsh.call("get_task", { task_id: task.id })).task;
-  const attachInput = { task_id: task.id, expected_version: current.version, source_path: file, request_id: "one-attachment" };
+  const attachInput = { response: "full", task_id: task.id, expected_version: current.version, source_path: file, request_id: "one-attachment" };
   const attached = decoded(await dsh.call("add_task_attachment", attachInput)); assert.equal(attached.task.attachments.length, 1);
   assert.equal(attached.file.localPathStatus, "available");
   assert.equal(attached.task.attachments[0].localPath, attached.file.localPath);

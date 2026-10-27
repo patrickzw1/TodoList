@@ -47,7 +47,7 @@ try {
     let log="";try {log=await readFile(debug,"utf8");} catch {}
     const toolCount=/Connected.*?(\d+) tools/i.exec(log) ?? /tools[:=]\s*(\d+)/i.exec(log);
     evidence.claude_code.toolCount=toolCount?Number(toolCount[1]):null;
-    evidence.claude_code.discoveryProven=evidence.claude_code.connected && evidence.claude_code.toolCount===10;
+    evidence.claude_code.discoveryProven=evidence.claude_code.connected && evidence.claude_code.toolCount===17;
     if(!evidence.claude_code.discoveryProven) {
       // A deterministic loopback provider permits client startup/tool discovery
       // without credentials, real inference, or any external provider request.
@@ -76,7 +76,7 @@ try {
       const init=output.split(/\r?\n/).filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return null;}}).find(message=>message?.type==="system"&&message.subtype==="init");
       const tools=init?.tools?.filter(name=>name.startsWith("mcp__todolist__"))??[];
       evidence.claude_code.toolCount=tools.length||evidence.claude_code.toolCount;
-      evidence.claude_code.discoveryProven=tools.length===10;
+      evidence.claude_code.discoveryProven=tools.length===17;
       evidence.claude_code.provider="deterministic loopback fixture"; evidence.claude_code.providerRequests=providerRequests;
       mockProvider.closeAllConnections();await new Promise(resolve=>mockProvider.close(resolve));mockProvider=null;
       delete env.ANTHROPIC_API_KEY;delete env.ANTHROPIC_BASE_URL;
@@ -104,7 +104,7 @@ try {
     const result=await request("mcpServerStatus/list",{});
     const server=result.data?.find(s=>s.name==="todolist");
     evidence.codex.toolCount=server?Object.keys(server.tools??{}).length:0;
-    evidence.codex.discoveryProven=evidence.codex.toolCount===10;
+    evidence.codex.discoveryProven=evidence.codex.toolCount===17;
     evidence.codex.serverState=server?.status ?? server?.state ?? null;
     child.stdin.end();const timeout=setTimeout(()=>child.kill(),3000);await exit;clearTimeout(timeout);
     if(!evidence.codex.discoveryProven) evidence.codex.limitation="App-server status returned without the complete TodoList tool set.";

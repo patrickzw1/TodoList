@@ -24,7 +24,7 @@ In **Connections & Permissions**, select Codex, Claude Code, or DeepSeek Harness
 
 A user successfully invoked the read-only TodoList MCP `list_projects` tool in DeepSeek Harness desktop 0.2.0-rc.2. Other tools and write operations have not been tested in that client.
 
-MCP attachment and image results include the managed copy's absolute local path when that file is available. The path belongs to the computer running the MCP server; the client still needs permission to read files on that host, and receiving a path does not mean the content was read. Missing or unsafe files have a null path. MCP does not return file or image content.
+MCP starts with 15 compact search summaries per page and reads requested detail sections. It supports versioned, idempotent local and atomic batch edits, archive/restore, text attachment submission, and real text/PDF/DOCX/PPTX/XLSX/image reads by associated task/file IDs. Content search has explicit budgets and continuations; scanned content reports that OCR is needed. Ordinary lists/details never expand file bodies. Available metadata still includes the managed copy's path on the MCP host; receiving a path does not prove content was read, and originals are preserved. Legacy consumers can select full projections explicitly. See [MCP API](docs/MCP_API.md) for compatibility and safety limits.
 
 ## Data location
 
