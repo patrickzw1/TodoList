@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { seedWorkspace } from "./seed";
-import { boundedActivity, completionTime } from "./task-activity";
+import { boundedActivity, completionTime, taskAuditTimes } from "./task-activity";
 import { validateWorkspaceCompletion } from "./task-validation";
 import type { Task, Workspace } from "./types";
 
@@ -88,6 +88,7 @@ function normalizeWorkspace(workspace: Workspace): Workspace {
     ...workspace,
     tasks: workspace.tasks.map((task) => ({
       ...task,
+      ...taskAuditTimes({ ...task, activity: task.activity ?? [] }),
       archived: task.archived ?? false,
       activity: boundedActivity(task.activity ?? []),
       completedAt: completionTime({ ...task, activity: task.activity ?? [] }),
@@ -139,7 +140,7 @@ async function saveWithRebase(initial: Workspace, updater: WorkspaceUpdater, res
   for (let attempt = 0; attempt < MAX_SAVE_ATTEMPTS; attempt += 1) {
     try {
       if (restore) candidate = await invoke<Workspace>("restore_workspace", { workspace: candidate });
-      else await invoke("save_workspace", { workspace: candidate });
+      else candidate = await invoke<Workspace>("save_workspace", { workspace: candidate });
       cacheWorkspace(candidate, true);
       return { workspace: candidate, merged };
     } catch (error) {

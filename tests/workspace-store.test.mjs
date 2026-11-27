@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
-import { boundedActivity, completionTime, taskWithUserActivity } from "../src/task-activity.ts";
+import { boundedActivity, taskAuditTimes, completionTime, taskWithUserActivity } from "../src/task-activity.ts";
 import { validateWorkspaceCompletion } from "../src/task-validation.ts";
 import { importedWorkspaceForSave } from "../src/workspace-backup.ts";
 import { checklistEditorEdit, checklistEditsOnLatest } from "../src/task-checklists.ts";
@@ -69,10 +69,11 @@ function driver({ desktop = true, desktopHostWithoutBridge = false, cacheFails =
       for (const task of database.tasks) task.version = 500;
       return structuredClone(database);
     }
+    return structuredClone(database);
   };
   const dependencies = {
     react, "@tauri-apps/api/core": { invoke }, "./seed": { seedWorkspace: fixture() },
-    "./task-activity": { boundedActivity, completionTime }, "./task-validation": { validateWorkspaceCompletion },
+    "./task-activity": { boundedActivity, taskAuditTimes, completionTime }, "./task-validation": { validateWorkspaceCompletion },
   };
   const exports = {};
   const source = ts.transpileModule(readFileSync(new URL("../src/workspace-store.ts", import.meta.url), "utf8"), {

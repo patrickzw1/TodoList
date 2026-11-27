@@ -1,0 +1,441 @@
+{
+  "date": "2026-11-27",
+  "fixture": "qa/review-2026-11-12/synthetic-browser-fixture.json",
+  "captures": [
+    {
+      "name": "01-list-1360",
+      "documentW": 1360,
+      "dpr": 1,
+      "h": 860,
+      "w": 1360
+    },
+    {
+      "name": "02-due-sort-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "01-list-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "03-detail-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "03-detail-1360",
+      "documentW": 1360,
+      "dpr": 1,
+      "h": 860,
+      "w": 1360
+    },
+    {
+      "name": "04-image-viewer-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "05-editor-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "05-editor-1360",
+      "documentW": 1360,
+      "dpr": 1,
+      "h": 860,
+      "w": 1360
+    },
+    {
+      "name": "06-editor-invalid-date-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "07-board-1360",
+      "documentW": 1360,
+      "dpr": 1,
+      "h": 860,
+      "w": 1360
+    },
+    {
+      "name": "07-board-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "02-project-sort-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "08-search-empty-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "09-settings-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "09-settings-bottom-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "09-settings-1360",
+      "documentW": 1360,
+      "dpr": 1,
+      "h": 860,
+      "w": 1360
+    },
+    {
+      "name": "10-integration-1360",
+      "documentW": 1360,
+      "dpr": 1,
+      "h": 860,
+      "w": 1360
+    },
+    {
+      "name": "10-integration-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "10-integration-manual-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "11-sticky-360",
+      "documentW": 360,
+      "dpr": 1,
+      "h": 330,
+      "w": 360
+    },
+    {
+      "name": "11-sticky-320",
+      "documentW": 320,
+      "dpr": 1,
+      "h": 220,
+      "w": 320
+    },
+    {
+      "name": "11-sticky-guard-320",
+      "documentW": 320,
+      "dpr": 1,
+      "h": 220,
+      "w": 320
+    },
+    {
+      "name": "03-detail-expanded-960",
+      "documentW": 960,
+      "dpr": 1,
+      "h": 640,
+      "w": 960
+    },
+    {
+      "name": "00-reference-comparison",
+      "documentW": 1265,
+      "dpr": 1,
+      "h": 720,
+      "w": 1265,
+      "jpegWidth": 1265,
+      "jpegHeight": 712
+    }
+  ],
+  "dueSort": {
+    "rowCount": 38,
+    "orderMatches": true,
+    "examples": [
+      {
+        "display": "2026-11-08 完成",
+        "id": "qa-task-27",
+        "due": "2026-11-10"
+      },
+      {
+        "display": "2026-11-10 完成",
+        "id": "qa-task-19",
+        "due": "2026-11-11"
+      },
+      {
+        "display": "2026-11-02 完成",
+        "id": "qa-task-11",
+        "due": "2026-11-12"
+      }
+    ],
+    "reorderHandles": 0
+  },
+  "keyboardDetail": [
+    {
+      "element": "DIV",
+      "insideDetail": false,
+      "label": "长标题验收：任务详情保持",
+      "occluded": false
+    },
+    {
+      "element": "INPUT",
+      "insideDetail": false,
+      "label": "选择任务 长标题验收：任务详情保持固定覆盖层，所有操作始终可达，中文与 VeryLongEnglishIdentifierWithoutAnySpaces 保持可读",
+      "occluded": false
+    },
+    {
+      "element": "BUTTON",
+      "insideDetail": false,
+      "label": "完成任务",
+      "occluded": false
+    },
+    {
+      "element": "BUTTON",
+      "insideDetail": false,
+      "label": "取消桌面置顶",
+      "occluded": true
+    },
+    {
+      "element": "DIV",
+      "insideDetail": false,
+      "label": "04 · 回归列表与看板",
+      "occluded": false
+    },
+    {
+      "element": "INPUT",
+      "insideDetail": false,
+      "label": "选择任务 04 · 回归列表与看板排序",
+      "occluded": false
+    }
+  ],
+  "detail960": {
+    "bodyScrollTop": 0,
+    "bodyScrollWidth": 379,
+    "bodyWidth": 379,
+    "descriptionY": 561,
+    "footerY": 573,
+    "headerActions": 4,
+    "tagHeight": 183,
+    "workspaceWidth": 760
+  },
+  "detail1360": {
+    "bodyScrollTop": 0,
+    "bodyScrollWidth": 405,
+    "bodyWidth": 405,
+    "descriptionY": 531,
+    "footerY": 793,
+    "headerActions": 4,
+    "tagHeight": 153,
+    "workspaceWidth": 1140
+  },
+  "outsideWheel": {
+    "before": 0,
+    "after": 640,
+    "bodyScrollTop": 0,
+    "bodyScrollWidth": 379,
+    "bodyWidth": 379,
+    "descriptionY": 561,
+    "footerY": 573,
+    "headerActions": 4,
+    "tagHeight": 183,
+    "workspaceWidth": 760
+  },
+  "images": {
+    "viewerPage": "synthetic-review-2.svg\n2/3\n适应窗口\n原始尺寸\n100%",
+    "detailRemained": 1
+  },
+  "editorDate": {
+    "invalid": "true",
+    "visibleError": "请输入有效日期（YYYY-MM-DD）。",
+    "stillEditing": true
+  },
+  "outsidePointer": {
+    "detailClosed": true,
+    "selectedRows": 0
+  },
+  "board1360": {
+    "cardHeight": 196,
+    "columnBodyHeight": 622,
+    "columnScrolls": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "columnWidth": 262,
+    "contentWidth": 1140,
+    "scrollLeft": 0,
+    "titleHeight": 104,
+    "titleLineHeight": 20.8,
+    "viewportWidth": 1140
+  },
+  "board960": {
+    "cardHeight": 279,
+    "columnBodyHeight": 392,
+    "columnScrolls": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "columnWidth": 176,
+    "contentWidth": 796,
+    "scrollLeft": 0,
+    "titleHeight": 187,
+    "titleLineHeight": 20.8,
+    "viewportWidth": 760
+  },
+  "boardWheel": {
+    "cardHeight": 279,
+    "columnBodyHeight": 392,
+    "columnScrolls": [
+      640,
+      0,
+      0,
+      0
+    ],
+    "columnWidth": 176,
+    "contentWidth": 796,
+    "scrollLeft": 0,
+    "titleHeight": 187,
+    "titleLineHeight": 20.8,
+    "viewportWidth": 760
+  },
+  "boardHorizontal": {
+    "cardHeight": 279,
+    "columnBodyHeight": 392,
+    "columnScrolls": [
+      640,
+      0,
+      0,
+      0
+    ],
+    "columnWidth": 176,
+    "contentWidth": 796,
+    "scrollLeft": 0,
+    "titleHeight": 187,
+    "titleLineHeight": 20.8,
+    "viewportWidth": 760
+  },
+  "boardRightByKeyboard": {
+    "cardHeight": 279,
+    "columnBodyHeight": 392,
+    "columnScrolls": [
+      640,
+      0,
+      0,
+      0
+    ],
+    "columnWidth": 176,
+    "contentWidth": 796,
+    "scrollLeft": 36,
+    "titleHeight": 187,
+    "titleLineHeight": 20.8,
+    "viewportWidth": 760
+  },
+  "boardDrag": {
+    "before": "in_progress",
+    "after": "blocked",
+    "afterKeyboard": "in_progress"
+  },
+  "projectSortHint": "跨项目排序 · 未记录的时间排在最后",
+  "selection": {
+    "filteredCount": 6,
+    "selected": 6,
+    "afterEmpty": 0
+  },
+  "manualReorder": {
+    "initialOrder": [
+      "qa-task-00",
+      "qa-task-03",
+      "qa-task-06"
+    ],
+    "changedOrder": [
+      "qa-task-03",
+      "qa-task-00",
+      "qa-task-06"
+    ],
+    "restoredOrder": [
+      "qa-task-00",
+      "qa-task-03",
+      "qa-task-06"
+    ]
+  },
+  "settings": {
+    "narrow": {
+      "clientHeight": 640,
+      "scrollHeight": 887,
+      "scrollWidth": 690,
+      "top": 0,
+      "width": 690
+    },
+    "checkEnabled": false,
+    "narrowEnd": {
+      "clientHeight": 640,
+      "scrollHeight": 887,
+      "scrollWidth": 690,
+      "top": 161,
+      "width": 690
+    }
+  },
+  "integration": {
+    "tabBefore": "Codex\n未配置",
+    "tabAfterArrow": "Codex\n未配置",
+    "tabAfterClick": "Claude Code\n未配置",
+    "manualDraftRetained": true,
+    "pathCheckEnabled": false,
+    "scroll": {
+      "clientHeight": 640,
+      "scrollHeight": 1158,
+      "scrollWidth": 690,
+      "top": 518,
+      "width": 690
+    }
+  },
+  "mainConsoleErrors": [],
+  "sticky": {
+    "bg": "rgb(255, 254, 248)",
+    "count": 3,
+    "textWidth": 744,
+    "tooltip": null,
+    "visibleWidth": 198,
+    "completionGuard": true,
+    "minimum": {
+      "content": 221,
+      "top": 0,
+      "viewport": 126,
+      "afterWheel": 95
+    }
+  },
+  "noteConsoleErrors": [],
+  "detailExpansion": {
+    "workspaceBefore": 760,
+    "workspaceAfter": 760,
+    "panelWidth": 960
+  }
+}

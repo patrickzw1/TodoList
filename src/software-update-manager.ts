@@ -15,12 +15,29 @@ export interface ManagedSoftwareUpdate {
   close(): Promise<void>;
 }
 
+export type UpdateCheckStatus = {
+  lastAttemptAt: number | null;
+  /** Most recent successful check, retained when a later attempt fails. */
+  lastCheckedAt: number | null;
+  nextAutomaticCheckAt: number | null;
+  nextManualCheckAt: number | null;
+  retryAt: number | null;
+  lastResult: "latest" | "available" | "error" | null;
+  message: string | null;
+};
+
+export type SoftwareUpdateCheckResult = {
+  update: ManagedSoftwareUpdate | null;
+  status: UpdateCheckStatus;
+  checked: boolean;
+};
+
 export interface SoftwareUpdateRuntime {
   desktop: boolean;
   buildVersion: string;
   now?: () => number;
   getCurrentVersion?: () => Promise<string>;
-  check?: () => Promise<ManagedSoftwareUpdate | null>;
+  check?: (automatic: boolean) => Promise<SoftwareUpdateCheckResult>;
   getComponentStatus?: () => Promise<ComponentBuildStatus | null>;
   getRecovery?: () => Promise<UpdateRecovery | null>;
   retryRecovery?: (attemptId: string) => Promise<void>;
@@ -38,6 +55,13 @@ export interface SoftwareUpdateSnapshot {
   progress: number | null;
   componentStatus: ComponentBuildStatus | null;
   recovery: UpdateRecovery | null;
+  lastAttemptAt: number | null;
+  lastCheckedAt: number | null;
+  nextAutomaticCheckAt: number | null;
+  nextManualCheckAt: number | null;
+  retryAt: number | null;
+  checkBlockedUntil: number | null;
+  lastCheckResult: UpdateCheckStatus["lastResult"];
 }
 
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -47,7 +71,6 @@ export function createSoftwareUpdateManager(runtime: SoftwareUpdateRuntime) {
   const now = runtime.now ?? Date.now;
   let disposed = false;
   let initialized = false;
-  let lastCheckAttempt = 0;
   let checkInFlight: Promise<void> | null = null;
   let availableUpdate: ManagedSoftwareUpdate | null = null;
   let snapshot: SoftwareUpdateSnapshot = {
@@ -59,6 +82,13 @@ export function createSoftwareUpdateManager(runtime: SoftwareUpdateRuntime) {
     progress: null,
     componentStatus: null,
     recovery: null,
+    lastAttemptAt: null,
+    lastCheckedAt: null,
+    nextAutomaticCheckAt: null,
+    nextManualCheckAt: null,
+    retryAt: null,
+    checkBlockedUntil: null,
+    lastCheckResult: null,
   };
 
   const publish = (patch: Partial<SoftwareUpdateSnapshot>) => {
@@ -77,22 +107,38 @@ export function createSoftwareUpdateManager(runtime: SoftwareUpdateRuntime) {
     publish({ phase: "error", message: friendlyUpdateError(error, stage), progress: null, availableVersion: null });
   };
 
-  const checkForUpdate = () => {
+  const runCheck = (automatic: boolean) => {
     if (!runtime.desktop || disposed || !runtime.check) return Promise.resolve();
     if (checkInFlight) return checkInFlight;
     if (["downloading", "downloaded", "installing"].includes(snapshot.phase)) return Promise.resolve();
-    lastCheckAttempt = now();
+    const blockedUntil = Math.max(snapshot.retryAt ?? 0,
+      (automatic ? snapshot.nextAutomaticCheckAt : snapshot.nextManualCheckAt) ?? 0);
+    if (now() < blockedUntil) return Promise.resolve();
     const operation = (async () => {
       publish({ phase: "checking", message: "正在安全检查更新……", progress: null, availableVersion: null });
       try {
         await closeAvailableUpdate();
-        const update = await runtime.check!();
+        const { update, status, checked } = await runtime.check!(automatic);
         if (disposed) {
           if (update) await update.close();
           return;
         }
-        availableUpdate = update;
-        if (update) {
+        publish({
+          lastAttemptAt: status.lastAttemptAt, lastCheckedAt: status.lastCheckedAt,
+          nextAutomaticCheckAt: status.nextAutomaticCheckAt, nextManualCheckAt: status.nextManualCheckAt,
+          retryAt: status.retryAt, lastCheckResult: status.lastResult,
+          checkBlockedUntil: Math.max(status.retryAt ?? 0, status.nextManualCheckAt ?? 0) || null,
+        });
+        if (!checked || status.lastResult === "error") {
+          if (update) await update.close();
+          publish({
+            phase: status.lastResult === "error" ? "error" : "idle", availableVersion: null,
+            message: status.message ?? (status.lastResult === "available"
+              ? "上次检查发现可用更新；可在检查间隔结束后重新确认版本。"
+              : status.lastResult === "latest" ? "上次检查未发现新版本。" : "更新检查已有记录，请在检查间隔结束后重试。"),
+          });
+        } else if (update) {
+          availableUpdate = update;
           publish({ phase: "available", availableVersion: update.version, message: `发现新版本 ${update.version}，下载前不会启动安装。` });
         } else {
           publish({ phase: "latest", availableVersion: null, message: "当前已经是最新版本。" });
@@ -105,11 +151,10 @@ export function createSoftwareUpdateManager(runtime: SoftwareUpdateRuntime) {
     return checkInFlight;
   };
 
+  const checkForUpdate = () => runCheck(false);
+
   const checkIfStale = () => {
-    if (!runtime.desktop || disposed || (lastCheckAttempt > 0 && now() - lastCheckAttempt < UPDATE_CHECK_INTERVAL_MS)) {
-      return Promise.resolve();
-    }
-    return checkForUpdate();
+    return runCheck(true);
   };
 
   const initialize = async () => {

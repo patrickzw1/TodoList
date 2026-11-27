@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, completionTime, formatActivityTime, taskDateLabel, taskWithUserActivity } from "../src/task-activity.ts";
+import { MAX_TASK_ACTIVITY_ITEMS, activityItemsForDetail, boundedActivity, taskAuditTimes, completionTime, formatActivityTime, taskDateLabel, taskWithUserActivity } from "../src/task-activity.ts";
 import { resolveDefaultProjectId } from "../src/task-creation.ts";
-import { searchTasks, tasksForView } from "../src/task-filtering.ts";
+import { searchTasks, tasksForView, sortTasks, parseTaskSort, taskListDate } from "../src/task-filtering.ts";
 import { applyChecklistEditorEdit, checklistEditorEdit } from "../src/task-checklists.ts";
 import { calendarMonthCells, isDueDateOnOrBefore, isValidIsoDate, normalizeOptionalDueDate, shiftIsoDate, shiftIsoMonth, UNSCHEDULED_DUE_DATE } from "../src/date-utils.ts";
 import { isPresetProjectColor, normalizeProjectColor, PROJECT_COLORS, PROJECT_COLOR_PRESETS } from "../src/project-colors.ts";
@@ -15,6 +15,19 @@ function makeTask(activity = []) {
     version: 1, subtasks: [], acceptanceCriteria: [], dependencies: [], activity,
   };
 }
+
+test("due-date sorting exposes the due date of completed rows alongside their completion date", () => {
+  const today = new Date(2026, 10, 27, 12);
+  const completed = { ...makeTask(), status: "done", dueDate: "2026-12-01", completedAt: new Date(2026, 10, 25, 12).toISOString() };
+  const earlier = { ...makeTask(), id: "earlier", dueDate: "2026-11-27" };
+  const unknown = { ...completed, id: "unknown", dueDate: "2026-02-30" };
+  assert.deepEqual(sortTasks([unknown, completed, earlier], [], { key: "dueDate", direction: "asc" }).map((task) => taskListDate(task, "dueDate", today)), [
+    { primary: "11月27日", completed: null },
+    { primary: "12月1日", completed: "11月25日完成" },
+    { primary: "未安排", completed: "11月25日完成" },
+  ]);
+  assert.deepEqual(taskListDate(completed, "manual", today), { primary: "11月25日完成", completed: null });
+});
 
 test("completion time follows status transitions and survives unrelated edits", () => {
   const first = taskWithUserActivity(makeTask(), "完成任务", { status: "done" }, new Date("2026-10-20T06:12:34Z"));
@@ -219,12 +232,11 @@ test("calendar helpers produce a stable six-week grid and keyboard-safe date mov
   assert.equal(calendarMonthCells(9999, 12).at(-1).date, null);
 });
 
-test("task detail tags wrap inside their metadata column and the editor uses a controllable date picker", () => {
+test("task detail tags wrap inside their summary and the editor uses a controllable date picker", () => {
   const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   const dialogs = readFileSync(new URL("../src/dialogs.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-  assert.match(app, /className="task-meta-tags"/);
-  assert.match(styles, /\.task-meta > div \{[^}]*grid-template-columns: 84px minmax\(0, 1fr\)/);
+  assert.match(app, /className="tags" aria-label="任务标签"/);
   assert.match(styles, /\.tags \{[^}]*max-width: 100%;[^}]*flex-wrap: wrap;/);
   assert.match(styles, /\.tags span \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;/);
   assert.doesNotMatch(dialogs, /type="date"/);
@@ -236,7 +248,7 @@ test("task detail tags wrap inside their metadata column and the editor uses a c
 
 test("list and board render the same filtered visible task collection", () => {
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(appSource, /<ListView[^>]+tasks=\{visibleTasks\}/);
+  assert.match(appSource, /<ListView[^>]+tasks=\{sortedTasks\}/);
   assert.match(appSource, /<BoardView[^>]+tasks=\{visibleTasks\}/);
 });
 
@@ -250,4 +262,53 @@ test("search filters only the supplied view and matches task and project details
   assert.deepEqual(searchTasks(tasks, projects, "mcp").map((task) => task.id), ["title", "tag"]);
   assert.deepEqual(searchTasks(tasks.slice(1), projects, "release"), []);
   assert.deepEqual(searchTasks(tasks, projects, "联调").map((task) => task.id), ["tag"]);
+});
+
+
+test("display sorting crosses projects, keeps unknown values last and never mutates manual order", () => {
+  const projects = [{ id: "b" }, { id: "a" }];
+  const tasks = [
+    { ...makeTask(), id: "one", projectId: "a", createdAt: "2026-11-10T10:00:00+08:00", dueDate: "2026-11-11" },
+    { ...makeTask(), id: "unknown", projectId: "b", dueDate: "9999-12-31" },
+    { ...makeTask(), id: "two", projectId: "b", createdAt: "2026-11-12T00:00:00Z", dueDate: "2026-11-10" },
+    { ...makeTask(), id: "tie", projectId: "a", createdAt: "2026-11-12T08:00:00+08:00", dueDate: "bad" },
+  ];
+  const original = structuredClone(tasks);
+  const ids = (key, direction = "desc") => sortTasks(tasks, projects, { key, direction }).map(t => t.id);
+  assert.deepEqual(ids("createdAt"), ["two", "tie", "one", "unknown"]);
+  assert.deepEqual(ids("createdAt", "asc"), ["one", "two", "tie", "unknown"]);
+  assert.deepEqual(ids("dueDate", "asc"), ["two", "one", "unknown", "tie"]);
+  assert.deepEqual(ids("project"), ["unknown", "two", "one", "tie"]);
+  assert.deepEqual(ids("completedAt"), tasks.map(t => t.id));
+  assert.strictEqual(sortTasks(tasks, projects, { key: "manual", direction: "asc" }), tasks);
+  assert.deepEqual(tasks, original);
+  assert.deepEqual(parseTaskSort("garbage"), { key: "manual", direction: "asc" });
+  assert.deepEqual(parseTaskSort('{"key":"no-such-key","direction":"desc"}'), { key: "manual", direction: "asc" });
+});
+
+test("audit timestamps preserve creation, reject guessed history and ignore no-op user edits", () => {
+  const event = (action, at) => ({ id: action, action, at, actor: "user" });
+  const created = "2026-11-01T10:00:00+08:00", edited = "2026-11-10T08:00:00Z";
+  assert.deepEqual(taskAuditTimes(makeTask([event("编辑任务", edited)])), { createdAt: null, updatedAt: edited });
+  assert.deepEqual(taskAuditTimes(makeTask([event("创建任务", "2026-11-01 10:00"), event("未知操作", edited)])), { createdAt: null, updatedAt: null });
+  const task = { ...makeTask([event("创建任务", created)]), createdAt: created, updatedAt: created };
+  assert.strictEqual(taskWithUserActivity(task, "编辑任务", { title: task.title }), task);
+  const next = taskWithUserActivity(task, "编辑任务", { title: "Changed", createdAt: edited }, new Date(edited));
+  assert.equal(next.createdAt, created); assert.equal(next.updatedAt, "2026-11-10T08:00:00.000Z");
+  const done = taskWithUserActivity(next, "完成任务", { status: "done" }, new Date("2026-11-11T00:00:00Z"));
+  assert.equal(done.completedAt, done.updatedAt);
+});
+
+
+test("completed and updated display order use valid timestamps and keep explicit unknowns", () => {
+  const older = { ...makeTask(), id:"older", status:"done", completedAt:"2026-11-01T10:00:00+08:00", updatedAt:"2026-11-02T00:00:00Z" };
+  const newer = { ...makeTask(), id:"newer", status:"done", completedAt:"2026-11-02T00:00:00Z", updatedAt:"2026-11-03T00:00:00Z" };
+  const unknown = { ...makeTask([{id:"event", action:"Codex 添加附件", actor:"codex", at:"2026-11-04T00:00:00Z"}]), id:"unknown", updatedAt:null };
+  for (const key of ["completedAt","updatedAt"]) {
+    assert.deepEqual(sortTasks([unknown,older,newer],[],{key,direction:"desc"}).map(t=>t.id), ["newer","older","unknown"]);
+    assert.deepEqual(sortTasks([unknown,older,newer],[],{key,direction:"asc"}).map(t=>t.id), ["older","newer","unknown"]);
+  }
+  assert.equal(taskAuditTimes(unknown).updatedAt, null);
+  delete unknown.updatedAt;
+  assert.equal(taskAuditTimes(unknown).updatedAt,"2026-11-04T00:00:00Z");
 });

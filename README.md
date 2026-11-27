@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-TodoList 是本地优先的桌面任务应用。Windows 版可独立使用；用户也可以主动配置 Codex、Claude Code 或 DeepSeek Harness，通过本地 MCP 访问任务。
+TodoList 是本地优先的桌面任务应用。Windows 版可独立使用，也可通过本地 MCP 接入 Codex、Claude Code、DeepSeek Harness 或 Google Antigravity。
 
 ## Windows 下载与使用
 
@@ -20,7 +20,9 @@ TodoList 是本地优先的桌面任务应用。Windows 版可独立使用；用
 
 ## AI 客户端集成
 
-在应用的“连接与权限”中选择 Codex、Claude Code 或 DeepSeek Harness，再确认配置、更新或移除。三个客户端的集成分别管理；移除一个客户端不会移除其他客户端的集成或任务。集成使用随应用提供的本地 STDIO MCP 和用户级 Skill，不修改客户端安装目录，也不会自动授予工具权限、打开任务台或置顶便签。界面的“已配置”表示磁盘配置已同步，实际连接请在客户端确认。路径和权限边界见 [AI 集成说明](docs/AI_INTEGRATION.md)；Codex 兼容说明见 [Codex 集成说明](docs/CODEX_INTEGRATION.md)。
+在应用的“连接与权限”中选择 Codex、Claude Code、DeepSeek Harness 或 Google Antigravity，再确认配置、更新或移除。客户端的集成分别管理；移除一个客户端不会移除其他客户端的集成或任务。集成使用随应用提供的本地 STDIO MCP 和用户级 Skill，不修改客户端安装目录，也不会自动授予工具权限、打开任务台或置顶便签。界面的“已配置”表示磁盘配置已同步，实际连接请在客户端确认。路径和权限边界见 [AI 集成说明](docs/AI_INTEGRATION.md)；Codex 兼容说明见 [Codex 集成说明](docs/CODEX_INTEGRATION.md)。
+
+更新会原位替换当前 Skill，恢复备份使用非 Skill 的 JSON 文件，不另留可被发现的旧 `SKILL.md`。显式配置、更新或移除时，仅迁移可严格确认属于 TodoList 的旧备份；未知内容、链接或被占用的文件会保留并提示，其他 MCP 项和用户工具限制保持原样。
 
 DeepSeek Harness 桌面版 0.2.0-rc.2 已由用户实际调用 TodoList MCP 的只读 `list_projects`。其余工具及写入操作尚未在该客户端实测。
 

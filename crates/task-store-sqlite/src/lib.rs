@@ -35,10 +35,24 @@ pub struct OptionalMutationResult {
 }
 
 impl SqliteTaskStore {
-    fn reconcile_completion_times(updated: &mut Workspace, previous: Option<&Workspace>) {
+    fn reconcile_task_times(updated: &mut Workspace, previous: Option<&Workspace>) {
+        let now = chrono::Utc::now().to_rfc3339();
         for task in &mut updated.tasks {
             let old = previous
                 .and_then(|workspace| workspace.tasks.iter().find(|item| item.id == task.id));
+            if let Some(old) = old {
+                task.created_at = old.created_at.clone();
+                task.updated_at = if task.same_content(old) {
+                    old.updated_at.clone()
+                } else {
+                    Some(now.clone())
+                };
+            } else if previous.is_some() {
+                task.created_at = Some(now.clone());
+                task.updated_at = Some(now.clone());
+            } else {
+                task.backfill_audit_times();
+            }
             match (old.map(|item| &item.status), &task.status) {
                 (Some(TaskStatus::Done), TaskStatus::Done) => {
                     task.completed_at = old.and_then(|item| item.completed_at.clone());
@@ -356,6 +370,7 @@ impl SqliteTaskStore {
 
         let result = (|| {
             updated.trim_activity();
+            Self::reconcile_task_times(&mut updated, Some(&current));
             updated.validate()?;
             updated.validate_completion_changes(&current)?;
             Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -506,8 +521,35 @@ impl SqliteTaskStore {
             .map_err(|error| error.to_string())?;
         payload
             .map(|value| {
-                let mut workspace: Workspace =
+                let raw: serde_json::Value =
                     serde_json::from_str(&value).map_err(|error| error.to_string())?;
+                let missing: Vec<_> = raw["tasks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|task| {
+                        (
+                            task.get("createdAt").is_none(),
+                            task.get("updatedAt").is_none(),
+                        )
+                    })
+                    .collect();
+                let mut workspace: Workspace =
+                    serde_json::from_value(raw).map_err(|error| error.to_string())?;
+                for (task, (created_missing, updated_missing)) in
+                    workspace.tasks.iter_mut().zip(missing)
+                {
+                    if created_missing || updated_missing {
+                        let mut recovered = task.clone();
+                        recovered.backfill_audit_times();
+                        if created_missing {
+                            task.created_at = recovered.created_at;
+                        }
+                        if updated_missing {
+                            task.updated_at = recovered.updated_at;
+                        }
+                    }
+                }
                 workspace.trim_activity();
                 workspace.backfill_completed_at();
                 Ok(workspace)
@@ -515,7 +557,7 @@ impl SqliteTaskStore {
             .transpose()
     }
 
-    pub fn save_workspace(&self, workspace: &Workspace) -> Result<(), String> {
+    pub fn save_workspace(&self, workspace: &Workspace) -> Result<Workspace, String> {
         let mut bounded_workspace = workspace.clone();
         bounded_workspace.trim_activity();
         let mut connection = self.connection()?;
@@ -532,10 +574,11 @@ impl SqliteTaskStore {
             }
             bounded_workspace.validate_completion_changes(&current)?;
         }
-        Self::reconcile_completion_times(&mut bounded_workspace, current.as_ref());
+        Self::reconcile_task_times(&mut bounded_workspace, current.as_ref());
         bounded_workspace.validate()?;
         Self::persist_transaction(&transaction, &bounded_workspace, current.as_ref())?;
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(bounded_workspace)
     }
 
     pub fn restore_workspace(&self, imported: &Workspace) -> Result<Workspace, String> {
@@ -600,7 +643,7 @@ impl SqliteTaskStore {
         })?;
         let mut updated = mutate(current.clone())?;
         updated.trim_activity();
-        Self::reconcile_completion_times(&mut updated, Some(&current));
+        Self::reconcile_task_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -634,7 +677,7 @@ impl SqliteTaskStore {
             });
         }
         updated.trim_activity();
-        Self::reconcile_completion_times(&mut updated, Some(&current));
+        Self::reconcile_task_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -695,7 +738,7 @@ impl SqliteTaskStore {
         })?;
         let mut updated = mutate(current.clone())?;
         updated.trim_activity();
-        Self::reconcile_completion_times(&mut updated, Some(&current));
+        Self::reconcile_task_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         Self::persist_transaction(&transaction, &updated, Some(&current))?;
@@ -792,6 +835,120 @@ impl SqliteTaskStore {
 mod tests {
     use super::*;
     use task_core::{ActivityItem, Priority, Project, Task, TaskStatus, MAX_TASK_ACTIVITY_ITEMS};
+
+    #[test]
+    fn audit_times_cover_new_real_changes_no_ops_old_clients_and_restore() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SqliteTaskStore::open(directory.path().join("audit.sqlite")).unwrap();
+        let empty = Workspace {
+            version: 1,
+            projects: vec![Project {
+                id: "p".into(),
+                name: "P".into(),
+                color: "#fff".into(),
+            }],
+            tasks: vec![],
+        };
+        store.save_workspace(&empty).unwrap();
+        let mut next: Workspace = serde_json::from_value(serde_json::json!({
+            "version":2,"projects":empty.projects,"tasks":[{"id":"t","projectId":"p","title":"New","description":"","status":"todo","priority":"medium","dueLabel":"","dueDate":"9999-12-31","tags":[],"source":"user","pinned":false,"version":1,"subtasks":[],"acceptanceCriteria":[],"dependencies":[],"activity":[]}]
+        })).unwrap();
+        next = store.save_workspace(&next).unwrap();
+        let created = next.tasks[0].created_at.clone().unwrap();
+        assert_eq!(next.tasks[0].updated_at.as_deref(), Some(created.as_str()));
+        next.version += 1;
+        next.tasks[0].created_at = Some("2000-01-01T00:00:00Z".into());
+        next.tasks[0].updated_at = Some("2000-01-01T00:00:00Z".into());
+        next.tasks[0].push_activity(ActivityItem {
+            id: "no-op".into(),
+            action: "编辑任务".into(),
+            actor: "user".into(),
+            at: "2030-01-01T00:00:00Z".into(),
+        });
+        next = store.save_workspace(&next).unwrap();
+        assert_eq!(next.tasks[0].created_at.as_deref(), Some(created.as_str()));
+        assert_eq!(next.tasks[0].updated_at.as_deref(), Some(created.as_str()));
+        assert_eq!(next.tasks[0].activity.len(), 1);
+        next.version += 1;
+        next.tasks[0].created_at = None; // whole-task legacy client
+        next.tasks[0].updated_at = None;
+        next.tasks[0].title = "Edited".into();
+        next = store.save_workspace(&next).unwrap();
+        assert_eq!(next.tasks[0].created_at.as_deref(), Some(created.as_str()));
+        assert!(next.tasks[0].updated_at.is_some());
+        let first_update = next.tasks[0].updated_at.clone();
+        let source = directory.path().join("audit.txt");
+        std::fs::write(&source, b"isolated file fixture").unwrap();
+        let imported = store
+            .import_task_file_idempotent(
+                "codex:attachment",
+                "audit-file",
+                "same-input",
+                "t",
+                next.tasks[0].version,
+                &source,
+                "attachment",
+                task_core::AiClient::Codex,
+            )
+            .unwrap();
+        assert_eq!(
+            imported.workspace.tasks[0].created_at.as_deref(),
+            Some(created.as_str())
+        );
+        assert!(imported.workspace.tasks[0].updated_at > first_update);
+        let replay = store
+            .import_task_file_idempotent(
+                "codex:attachment",
+                "audit-file",
+                "same-input",
+                "t",
+                next.tasks[0].version,
+                &source,
+                "attachment",
+                task_core::AiClient::Codex,
+            )
+            .unwrap();
+        assert_eq!(
+            replay.workspace.tasks[0].updated_at,
+            imported.workspace.tasks[0].updated_at
+        );
+        next = imported.workspace;
+        next.tasks[0].activity.clear();
+        next.version += 1;
+        next.tasks[0].created_at = None;
+        next.tasks[0].updated_at = None;
+        let restored = store.restore_workspace(&next).unwrap();
+        assert!(restored.tasks[0].created_at.is_none());
+        assert!(restored.tasks[0].updated_at.is_none());
+        assert!(store.load_workspace().unwrap().unwrap().tasks[0]
+            .updated_at
+            .is_none());
+        let connection = store.connection().unwrap();
+        let mut raw = serde_json::to_value(&restored).unwrap();
+        raw["tasks"][0]["activity"] = serde_json::json!([{"id":"legacy-file","action":"Codex 添加附件","actor":"codex","at":"2026-11-01T10:00:00+08:00"}]);
+        connection
+            .execute(
+                "UPDATE workspace_snapshot SET payload_json=?1 WHERE id=1",
+                [raw.to_string()],
+            )
+            .unwrap();
+        assert!(store.load_workspace().unwrap().unwrap().tasks[0]
+            .updated_at
+            .is_none());
+        raw["tasks"][0].as_object_mut().unwrap().remove("updatedAt");
+        connection
+            .execute(
+                "UPDATE workspace_snapshot SET payload_json=?1 WHERE id=1",
+                [raw.to_string()],
+            )
+            .unwrap();
+        let legacy = store.load_workspace().unwrap().unwrap();
+        assert!(legacy.tasks[0].created_at.is_none());
+        assert_eq!(
+            legacy.tasks[0].updated_at.as_deref(),
+            Some("2026-11-01T10:00:00+08:00")
+        );
+    }
 
     #[test]
     fn completion_timestamp_survives_sqlite_edits_and_backup_restore() {
@@ -1077,6 +1234,8 @@ mod tests {
                     description: String::new(),
                     status: TaskStatus::Todo,
                     completed_at: None,
+                    created_at: None,
+                    updated_at: None,
                     priority: Priority::Medium,
                     due_label: "未安排".into(),
                     due_date: "9999-12-31".into(),
@@ -1161,6 +1320,8 @@ mod tests {
                     description: String::new(),
                     status: TaskStatus::Todo,
                     completed_at: None,
+                    created_at: None,
+                    updated_at: None,
                     priority: Priority::Medium,
                     due_label: "Today".into(),
                     due_date: "2026-09-04".into(),

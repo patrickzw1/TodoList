@@ -5,9 +5,12 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
+use task_store_sqlite::managed_files::is_link;
 use task_store_sqlite::storage_path::{APP_IDENTIFIER, IS_PRODUCTION};
+use tempfile::NamedTempFile;
 use toml_edit::{value, Array, DocumentMut};
 
 const CORE_SKILL: &str = include_str!("../../.agents/skills/todolist-mcp/SKILL.md");
@@ -22,6 +25,7 @@ pub enum Client {
     Codex,
     ClaudeCode,
     DeepseekHarness,
+    Antigravity,
 }
 
 impl Client {
@@ -30,6 +34,7 @@ impl Client {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude_code",
             Self::DeepseekHarness => "deepseek_harness",
+            Self::Antigravity => "antigravity",
         }
     }
     fn label(self) -> &'static str {
@@ -37,6 +42,7 @@ impl Client {
             Self::Codex => "Codex",
             Self::ClaudeCode => "Claude Code (CC)",
             Self::DeepseekHarness => "DeepSeek Harness (DSH)",
+            Self::Antigravity => "Google Antigravity",
         }
     }
     fn marker(self) -> String {
@@ -47,6 +53,7 @@ impl Client {
             Self::Codex => "",
             Self::ClaudeCode => "\n## Claude Code adapter\n\nDiscover this personal Skill as /todolist-mcp. MCP tools are named mcp__todolist__<tool>; use the actual discovered tools. A returned localPath belongs to the MCP host; read it only with a separately permitted tool on that same filesystem. read_task_file delivers standard MCP image content; do not equate an unrendered image or requires_ocr with verified text. Respect Claude Code tool approvals and managed restrictions. This Skill declares no allowed-tools and grants no permissions. Reconnect MCP or restart Claude Code after configuring; use /reload-skills when adding a new Skill root.\n",
             Self::DeepseekHarness => "\n## DeepSeek Harness adapter\n\nDiscover todolist-mcp through the harness Skill tools and its user Skill root. MCP tools are named mcp__todolist__<tool>; use the actual discovered tools. A returned localPath belongs to the MCP host; read it only with a separately permitted tool on that same filesystem. read_task_file uses standard MCP image content; verify the active client actually exposes the image, and do not infer OCR or rendering from registration. Keep harness permission approvals in force. The active profile must resolve @deepseek-ai/dsh-mcp-client. Restart the harness after changing the home patch; registration alone does not prove that the active profile loaded the plugin or connected.\n",
+            Self::Antigravity => "\n## Google Antigravity adapter\n\nOpen /todolist-mcp or discover it in Agent Skills. Use the actual tools exposed by the todolist MCP server, subject to client and workspace permissions. A returned localPath belongs to the MCP host; read it only with a separately permitted tool on that filesystem. Restart the MCP server or reload Antigravity after configuration. Only a successful tool call verifies connectivity.\n",
         };
         format!("{CORE_SKILL}{adapter}")
     }
@@ -55,7 +62,31 @@ impl Client {
         Self::Codex => "重新连接 MCP 或重启 Codex。",
         Self::ClaudeCode => "重新连接 MCP 或重启 Claude Code；新增 Skill 根目录后可运行 /reload-skills。客户端与组织权限仍然适用。",
         Self::DeepseekHarness => "重启 Harness，并在活动 profile 中确认 @deepseek-ai/dsh-mcp-client 可解析；项目 Skill 和后续 patch 可覆盖用户配置。TodoList 不自动安装 Harness 插件或授予工具权限。",
+            Self::Antigravity => "在 Antigravity 中重启 todolist MCP 或重新打开客户端，再执行只读 list_projects 验证连接。App 与 CLI 共用全局 Skill。",
     }
+    }
+    fn json_registration_fields(self) -> Option<&'static [&'static str]> {
+        match self {
+            Self::ClaudeCode => Some(&["type", "command", "args"]),
+            Self::Antigravity => Some(&["command", "args", "serverUrl"]),
+            _ => None,
+        }
+    }
+    fn registration_matches(self, actual: &Value, expected: &Value) -> bool {
+        let Some(fields) = self.json_registration_fields() else {
+            return actual == expected;
+        };
+        expected.get("command").and_then(Value::as_str).is_some()
+            && fields.iter().all(|&key| {
+                // Antigravity may omit the optional empty args when saving its JSON.
+                if self == Self::Antigravity && key == "args" {
+                    let empty = |value: Option<&Value>| {
+                        value.is_none_or(|v| v.as_array().is_some_and(Vec::is_empty))
+                    };
+                    return empty(actual.get(key)) && empty(expected.get(key));
+                }
+                actual.get(key) == expected.get(key)
+            })
     }
 }
 
@@ -85,6 +116,10 @@ impl Paths {
         }
     }
     fn entry(&self) -> Value {
+        if self.client == Client::Antigravity {
+            // Released sidecars already accept no arguments and attribute those writes to generic AI.
+            return json!({"command":self.executable.to_string_lossy(), "args":[]});
+        }
         json!({"type":"stdio", "command":self.executable.to_string_lossy(), "args":["--client", self.client.id()]})
     }
     fn block(&self) -> String {
@@ -165,7 +200,7 @@ fn safe_path(path: &Path) -> Result<(), String> {
     }
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
-            Ok(meta) if meta.file_type().is_symlink() => {
+            Ok(meta) if is_link(&meta) => {
                 return Err("配置路径包含链接；已保持原样，请选择真实路径。".into())
             }
             Ok(_) => {}
@@ -188,7 +223,7 @@ fn read(path: &Path) -> Result<Option<String>, String> {
 }
 fn json_document(content: Option<&str>) -> Result<Value, String> {
     // Duplicate JSON keys are ambiguous ownership and must not be silently lost
-    // when preserving the rest of Claude's user configuration.
+    // when preserving the rest of the client's user configuration.
     let value = serde_json::from_str::<UniqueJson>(content.unwrap_or("{}"))
         .map_err(|e| format!("客户端 JSON 配置无效：{e}"))?;
     let value = value.0;
@@ -400,7 +435,7 @@ fn inspect(paths: &Paths) -> Result<Status, String> {
         return Ok(status);
     }
     let text = read(&paths.config)?;
-    let entry = if paths.client == Client::ClaudeCode {
+    let entry = if paths.client.json_registration_fields().is_some() {
         json_document(text.as_deref())?
             .get("mcpServers")
             .and_then(|s| s.get("todolist"))
@@ -424,12 +459,9 @@ fn inspect(paths: &Paths) -> Result<Status, String> {
         range.map(|r| Value::String(text[r].to_string()))
     };
     if let Some(ref entry) = entry {
-        let owned = record.as_ref().is_some_and(|r| match paths.client {
-            Client::ClaudeCode => ["type", "command", "args"]
-                .iter()
-                .all(|key| entry.get(key) == r.entry.get(key)),
-            _ => entry == &r.entry,
-        });
+        let owned = record
+            .as_ref()
+            .is_some_and(|r| paths.client.registration_matches(entry, &r.entry));
         if !owned {
             status.mcp_state = "conflict".into();
             status.conflict(
@@ -438,17 +470,12 @@ fn inspect(paths: &Paths) -> Result<Status, String> {
             );
             return Ok(status);
         }
-        let expected = if paths.client == Client::ClaudeCode {
+        let expected = if paths.client.json_registration_fields().is_some() {
             paths.entry()
         } else {
             Value::String(paths.block())
         };
-        let matches = match paths.client {
-            Client::ClaudeCode => ["type", "command", "args"]
-                .iter()
-                .all(|key| entry.get(key) == expected.get(key)),
-            _ => entry == &expected,
-        };
+        let matches = paths.client.registration_matches(entry, &expected);
         status.mcp_state = if matches {
             "registered"
         } else {
@@ -562,6 +589,175 @@ fn inspect_codex(paths: &Paths) -> Result<Status, String> {
     Ok(status)
 }
 
+// Recovery is a regular JSON file, never another directory containing SKILL.md.
+// Keep only owned Skill files here; full client-config backups stay by that config.
+fn skill_recovery(
+    paths: &Paths,
+    files: &BTreeMap<String, String>,
+    id: uuid::Uuid,
+) -> Result<PathBuf, String> {
+    let name = paths
+        .skill
+        .file_name()
+        .ok_or("Skill 路径缺少目录名。")?
+        .to_string_lossy();
+    let destination = paths
+        .skill
+        .with_file_name(format!("{name}.todolist-recovery-{id}.json"));
+    safe_path(&destination)?;
+    let content = serde_json::to_string_pretty(&json!({
+        "format":"todolist-skill-recovery", "version":1, "client":paths.client, "files":files
+    }))
+    .map_err(|e| e.to_string())?;
+    match read(&destination)? {
+        Some(existing) if existing == content => return Ok(destination),
+        Some(_) => return Err("恢复文件已存在且内容不同，已保留原件。".into()),
+        None => {}
+    }
+    let parent = destination.parent().ok_or("恢复文件缺少父目录。")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let mut temporary = NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    temporary
+        .write_all(content.as_bytes())
+        .and_then(|_| temporary.as_file().sync_all())
+        .map_err(|e| e.to_string())?;
+    // A name collision must never overwrite an unknown recovery file.
+    temporary
+        .persist_noclobber(&destination)
+        .map_err(|e| e.error.to_string())?;
+    Ok(destination)
+}
+
+fn legacy_skill_backup(
+    paths: &Paths,
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, String> {
+    safe_path(directory)?;
+    if !fs::symlink_metadata(directory)
+        .map_err(|e| e.to_string())?
+        .is_dir()
+    {
+        return Err("不是普通备份目录".into());
+    }
+    let marker = if paths.client == Client::Codex {
+        "app.todolist.desktop\n".into()
+    } else {
+        paths.client.marker()
+    };
+    // Check ownership before reading a similarly named sibling's old Skill.
+    if read(&directory.join(MARKER))?.as_ref() != Some(&marker) {
+        return Err("缺少可确认的管理标记".into());
+    }
+    let allowed = if paths.client == Client::Codex {
+        vec!["SKILL.md", MARKER, ".todolist-command"]
+    } else {
+        vec!["SKILL.md", MARKER, RECEIPT]
+    };
+    let mut files = BTreeMap::new();
+    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "文件名无法确认")?;
+        if !allowed.contains(&name.as_str()) {
+            return Err("含未知文件或目录".into());
+        }
+        let content = read(&entry.path())?.ok_or("备份文件已变化")?;
+        files.insert(name, content);
+    }
+    if files.get(MARKER) != Some(&marker) || !files.contains_key("SKILL.md") {
+        return Err("缺少可确认的管理标记或 Skill".into());
+    }
+    if let Some(receipt) = files.get(RECEIPT) {
+        let receipt: Receipt = serde_json::from_str(receipt).map_err(|_| "托管记录无效")?;
+        if receipt.client != paths.client {
+            return Err("托管记录属于其他客户端".into());
+        }
+    }
+    Ok(files)
+}
+
+// Called only after an explicit configure/update/remove succeeds. A retirement
+// failure must not turn a committed integration change into a failed operation.
+fn retire_legacy_skill_backups(paths: &Paths, status: &mut Status) {
+    let Some(parent) = paths.skill.parent() else {
+        return;
+    };
+    let prefix = format!(
+        "{}.todolist-backup-",
+        paths
+            .skill
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    );
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(_) => {
+            status
+                .message
+                .push_str(" 旧 Skill 备份目录无法读取，已保持原样。");
+            return;
+        }
+    };
+    let mut retired = 0;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            status
+                .message
+                .push_str(" 有旧备份目录项无法读取，已保持原样。");
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(suffix) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let result = (|| {
+            let id = uuid::Uuid::parse_str(suffix).map_err(|_| "名称无法确认归属")?;
+            if id.to_string() != suffix || id.get_version_num() != 4 {
+                return Err("名称无法确认归属".to_string());
+            }
+            let directory = entry.path();
+            let files = legacy_skill_backup(paths, &directory)?;
+            skill_recovery(paths, &files, id)?;
+            // Recheck the entire small, known file set after the recovery is
+            // durable. Unknown/new content is never recursively removed.
+            if legacy_skill_backup(paths, &directory)? != files {
+                return Err("备份内容已变化".into());
+            }
+            safe_path(&directory.join("SKILL.md"))?;
+            fs::remove_file(directory.join("SKILL.md")).map_err(|e| e.to_string())?;
+            for (name, content) in &files {
+                if name != "SKILL.md" {
+                    let path = directory.join(name);
+                    if read(&path)?.as_ref() != Some(content) {
+                        return Err("备份内容已变化".into());
+                    }
+                    fs::remove_file(path).map_err(|e| e.to_string())?;
+                }
+            }
+            fs::remove_dir(directory).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => retired += 1,
+            Err(reason) => status
+                .message
+                .push_str(&format!(" 旧备份 {name} 已保留或未完全退役：{reason}。")),
+        }
+    }
+    if retired > 0 {
+        status
+            .updated_items
+            .push(format!("旧 Skill 备份转为恢复文件（{retired}份）"));
+        status.message.push_str(&format!(
+            " 已将{retired}份旧 Skill 备份转为非 Skill 的 JSON 恢复文件。"
+        ));
+    }
+}
+
 // Snapshot only the selected client's owned files. On failure, undo this operation and keep backups.
 fn transaction<T>(
     paths: &Paths,
@@ -572,8 +768,11 @@ fn transaction<T>(
         paths.config.clone(),
         paths.skill.join("SKILL.md"),
         paths.skill.join(MARKER),
-        paths.skill.join(RECEIPT),
-        paths.skill.join(".todolist-command"),
+        paths.skill.join(if paths.client == Client::Codex {
+            ".todolist-command"
+        } else {
+            RECEIPT
+        }),
     ];
     if let Some(path) = preferences {
         files.push(path.to_path_buf());
@@ -587,23 +786,21 @@ fn transaction<T>(
             Ok((p, old))
         })
         .collect::<Result<_, String>>()?;
-    let backup_root = paths.skill.with_file_name(format!(
-        "{}.todolist-backup-{}",
-        paths
-            .skill
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
-        uuid::Uuid::new_v4()
-    ));
+    let mut skill_files = BTreeMap::new();
     for (path, content) in &snapshots {
         if let Some(content) = content {
             if path == &paths.config || preferences == Some(path.as_path()) {
                 backup_file(path)?;
             } else {
-                atomic_write(&backup_root.join(path.file_name().unwrap()), content)?;
+                skill_files.insert(
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    content.clone(),
+                );
             }
         }
+    }
+    if !skill_files.is_empty() {
+        skill_recovery(paths, &skill_files, uuid::Uuid::new_v4())?;
     }
     let existed = paths.skill.exists();
     match operation() {
@@ -646,7 +843,17 @@ fn configure_and_remember(
     if !before.can_configure {
         return Err(before.message);
     }
-    transaction(paths, preferences.map(|(p, _)| p), || {
+    let preferences_unchanged = match preferences {
+        Some((path, content)) => read(path)?.as_deref() == Some(content),
+        None => true,
+    };
+    if before.configured && preferences_unchanged {
+        let mut status = before;
+        status.action_result = "configured".into();
+        retire_legacy_skill_backups(paths, &mut status);
+        return Ok(status);
+    }
+    let mut status = transaction(paths, preferences.map(|(p, _)| p), || {
         let mut items = vec![];
         if paths.client == Client::Codex {
             let result = codex::configure(&paths.codex())?;
@@ -673,12 +880,13 @@ fn configure_and_remember(
             }
         } else {
             let old = read(&paths.config)?;
-            let entry = if paths.client == Client::ClaudeCode {
+            let fields = paths.client.json_registration_fields();
+            let entry = if fields.is_some() {
                 paths.entry()
             } else {
                 Value::String(paths.block())
             };
-            let next = if paths.client == Client::ClaudeCode {
+            let next = if let Some(fields) = fields {
                 let mut doc = json_document(old.as_deref())?;
                 let servers = doc
                     .as_object_mut()
@@ -688,13 +896,21 @@ fn configure_and_remember(
                     .as_object_mut()
                     .unwrap();
                 if let Some(server) = servers.get_mut("todolist") {
-                    for key in ["type", "command", "args"] {
-                        server[key] = entry[key].clone();
+                    if paths.client.registration_matches(server, &entry) {
+                        old.as_deref().unwrap_or_default().to_string()
+                    } else {
+                        // Update the owned launch properties in place. Keep the client's tool rules.
+                        for &key in fields {
+                            if let Some(value) = entry.get(key) {
+                                server[key] = value.clone();
+                            }
+                        }
+                        format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())
                     }
                 } else {
                     servers.insert("todolist".into(), entry.clone());
+                    format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())
                 }
-                format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())
             } else {
                 let text = old.as_deref().unwrap_or("");
                 if let Some(range) = dsh_range(text)? {
@@ -747,26 +963,32 @@ fn configure_and_remember(
         items.dedup();
         status.updated_items = items;
         Ok(status)
-    })
+    })?;
+    retire_legacy_skill_backups(paths, &mut status);
+    Ok(status)
 }
 fn remove(paths: &Paths) -> Result<Status, String> {
     let before = inspect(paths)?;
     if !before.can_remove {
         return Err("未找到可安全移除的 TodoList 托管集成。".into());
     }
-    transaction(paths, None, || {
+    let mut status = transaction(paths, None, || {
         if paths.client == Client::Codex {
             codex::remove_config(&paths.codex())?;
             codex::remove_skill(&paths.codex())?;
         } else {
             if let Some(text) = read(&paths.config)? {
-                let next = if paths.client == Client::ClaudeCode {
+                let next = if paths.client.json_registration_fields().is_some() {
                     let mut doc = json_document(Some(&text))?;
-                    if let Some(servers) = doc.get_mut("mcpServers").and_then(Value::as_object_mut)
-                    {
-                        servers.remove("todolist");
+                    let removed = doc
+                        .get_mut("mcpServers")
+                        .and_then(Value::as_object_mut)
+                        .and_then(|servers| servers.remove("todolist"));
+                    if removed.is_some() {
+                        format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())
+                    } else {
+                        text.clone()
                     }
-                    format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())
                 } else {
                     let mut external = dsh_external(&text, dsh_range(&text)?);
                     if dsh_document(&external)?.is_null() {
@@ -790,7 +1012,9 @@ fn remove(paths: &Paths) -> Result<Status, String> {
         status.action_result = "removed".into();
         status.updated_items = vec!["TodoList MCP 注册与托管 Skill".into()];
         Ok(status)
-    })
+    })?;
+    retire_legacy_skill_backups(paths, &mut status);
+    Ok(status)
 }
 
 fn expand_home_path(path: PathBuf, home: &Path) -> PathBuf {
@@ -849,6 +1073,13 @@ fn defaults(client: Client, home: &Path) -> (PathBuf, PathBuf) {
                 root.join("skills/todolist-mcp"),
             )
         }
+        Client::Antigravity => {
+            let root = home.join(".gemini/config");
+            (
+                root.join("mcp_config.json"),
+                root.join("skills/todolist-mcp"),
+            )
+        }
     }
 }
 fn detect(client: Client, home: &Path, config: &Path) -> (bool, String) {
@@ -856,11 +1087,18 @@ fn detect(client: Client, home: &Path, config: &Path) -> (bool, String) {
         Client::Codex => "codex",
         Client::ClaudeCode => "claude",
         Client::DeepseekHarness => "dsh",
+        Client::Antigravity => "agy",
     };
-    let executable = executable_in_path(name).or_else(|| {
-        let p = home.join(".local/bin").join(format!("{name}.exe"));
-        p.is_file().then_some(p)
-    });
+    let executable = executable_in_path(name)
+        .or_else(|| {
+            let p = home.join(".local/bin").join(format!("{name}.exe"));
+            p.is_file().then_some(p)
+        })
+        .or_else(|| {
+            (client == Client::Antigravity)
+                .then(|| executable_in_path("antigravity"))
+                .flatten()
+        });
     if let Some(path) = executable {
         return (true, format!("发现启动程序：{}", path.display()));
     }
@@ -986,7 +1224,12 @@ mod tests {
 
     #[test]
     fn every_client_skill_explains_managed_local_paths_without_granting_access() {
-        for client in [Client::Codex, Client::ClaudeCode, Client::DeepseekHarness] {
+        for client in [
+            Client::Codex,
+            Client::ClaudeCode,
+            Client::DeepseekHarness,
+            Client::Antigravity,
+        ] {
             let skill = client.skill();
             assert!(skill.contains("localPath"), "{}", client.label());
             assert!(skill.contains("MCP host"), "{}", client.label());
@@ -1005,6 +1248,7 @@ mod tests {
                 Client::Codex => "config.toml",
                 Client::ClaudeCode => ".claude.json",
                 Client::DeepseekHarness => "cordis.patch.yml",
+                Client::Antigravity => "mcp_config.json",
             }),
             skill: directory.join("skills/todolist-mcp"),
             executable,
@@ -1012,6 +1256,380 @@ mod tests {
             detection: "fixture".into(),
             manual: false,
         }
+    }
+
+    #[test]
+    fn antigravity_lifecycle_keeps_tool_rules_and_uses_no_sidecar_argument() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = fixture(root.path(), Client::Antigravity);
+        let (config, skill) = defaults(Client::Antigravity, root.path());
+        assert_eq!(config, root.path().join(".gemini/config/mcp_config.json"));
+        assert_eq!(
+            skill,
+            root.path().join(".gemini/config/skills/todolist-mcp")
+        );
+        let unrelated = json!({
+            "appearance": "light",
+            "mcpServers": {"custom": {"serverUrl": "https://example.invalid/mcp", "disabled": true}}
+        });
+        fs::write(&paths.config, unrelated.to_string()).unwrap();
+        assert!(!paths.skill.exists());
+        assert_eq!(inspect(&paths).unwrap().state, "not_configured");
+        assert!(!paths.skill.exists());
+
+        assert_eq!(configure(&paths).unwrap().runtime_health, "unverified");
+        let mut configured = json_document(read(&paths.config).unwrap().as_deref()).unwrap();
+        assert_eq!(
+            configured["mcpServers"]["todolist"],
+            json!({
+                "command": paths.executable.to_string_lossy(), "args": []
+            })
+        );
+        let server = configured["mcpServers"]["todolist"]
+            .as_object_mut()
+            .unwrap();
+        server.remove("args");
+        server.insert("enabledTools".into(), json!(["list_projects"]));
+        server.insert("disabledTools".into(), json!(["create_task"]));
+        server.insert("tools".into(), json!({"list_projects": {"eager": true}}));
+        server.insert("disabled".into(), json!(true));
+        let client_format = configured.to_string();
+        fs::write(&paths.config, &client_format).unwrap();
+        assert!(configure(&paths).unwrap().updated_items.is_empty());
+        assert!(recovery_files(&paths).is_empty());
+
+        fs::write(paths.skill.join("SKILL.md"), "old managed skill").unwrap();
+        let updated = configure(&paths).unwrap();
+        assert_eq!(updated.action_result, "updated");
+        assert_eq!(updated.updated_items, ["TodoList Skill"]);
+        assert_eq!(fs::read_to_string(&paths.config).unwrap(), client_format);
+        assert_eq!(recovery_files(&paths).len(), 1);
+
+        let mut migrated = paths.clone();
+        migrated.executable = root.path().join("new-todolist-mcp.exe");
+        fs::write(&migrated.executable, b"fixture").unwrap();
+        assert!(inspect(&migrated).unwrap().managed_migration);
+        assert_eq!(configure(&migrated).unwrap().action_result, "migrated");
+        let mut saved = json_document(read(&paths.config).unwrap().as_deref()).unwrap();
+        assert_eq!(
+            saved["mcpServers"]["todolist"]["command"],
+            migrated.executable.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            saved["mcpServers"]["todolist"]["enabledTools"],
+            json!(["list_projects"])
+        );
+        assert_eq!(
+            saved["mcpServers"]["todolist"]["disabledTools"],
+            json!(["create_task"])
+        );
+        assert_eq!(
+            saved["mcpServers"]["todolist"]["tools"],
+            json!({"list_projects": {"eager": true}})
+        );
+        assert_eq!(saved["mcpServers"]["todolist"]["disabled"], json!(true));
+
+        saved["mcpServers"]["todolist"]["serverUrl"] = json!("https://example.invalid/replacement");
+        fs::write(&paths.config, saved.to_string()).unwrap();
+        assert!(!inspect(&migrated).unwrap().can_remove);
+        assert!(configure(&migrated).is_err());
+        assert_eq!(
+            fs::read_to_string(&paths.config).unwrap(),
+            saved.to_string()
+        );
+        saved["mcpServers"]["todolist"]
+            .as_object_mut()
+            .unwrap()
+            .remove("serverUrl");
+        fs::write(&paths.config, saved.to_string()).unwrap();
+        assert_eq!(remove(&migrated).unwrap().action_result, "removed");
+        assert_eq!(
+            json_document(read(&paths.config).unwrap().as_deref()).unwrap(),
+            unrelated
+        );
+        assert!(!paths.skill.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn antigravity_same_name_without_receipt_stays_unowned() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = fixture(root.path(), Client::Antigravity);
+        let original = json!({"mcpServers": {"todolist": paths.entry()}}).to_string();
+        fs::write(&paths.config, &original).unwrap();
+        let status = inspect(&paths).unwrap();
+        assert_eq!(status.reason, "unknown_config");
+        assert!(!status.can_configure && !status.can_remove);
+        assert!(configure(&paths).is_err() && remove(&paths).is_err());
+        assert_eq!(fs::read_to_string(&paths.config).unwrap(), original);
+        assert!(!paths.skill.exists());
+    }
+    fn legacy_backup_fixture(paths: &Paths) -> PathBuf {
+        let directory = paths.skill.with_file_name(format!(
+            "{}.todolist-backup-{}",
+            paths.skill.file_name().unwrap().to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        for name in ["SKILL.md", MARKER, RECEIPT, ".todolist-command"] {
+            if let Some(content) = read(&paths.skill.join(name)).unwrap() {
+                fs::write(directory.join(name), content).unwrap();
+            }
+        }
+        directory
+    }
+    fn discoverable_skills(root: &Path) -> Vec<PathBuf> {
+        let mut result = vec![];
+        if root.exists() {
+            for entry in fs::read_dir(root).unwrap() {
+                let path = entry.unwrap().path();
+                let metadata = fs::symlink_metadata(&path).unwrap();
+                if is_link(&metadata) {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    result.extend(discoverable_skills(&path));
+                } else if path.file_name().is_some_and(|name| name == "SKILL.md") {
+                    result.push(path);
+                }
+            }
+        }
+        result.sort();
+        result
+    }
+    fn recovery_files(paths: &Paths) -> Vec<PathBuf> {
+        let mut result = fs::read_dir(paths.skill.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains(".todolist-recovery-")
+            })
+            .collect::<Vec<_>>();
+        result.sort();
+        result
+    }
+
+    #[test]
+    fn updates_and_removal_never_leave_discoverable_recovery_skills_for_any_client() {
+        for client in [Client::Codex, Client::ClaudeCode, Client::DeepseekHarness] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = fixture(root.path(), client);
+            configure(&paths).unwrap();
+            for revision in 0..3 {
+                let old = format!("old owned Skill {revision}");
+                fs::write(paths.skill.join("SKILL.md"), &old).unwrap();
+                let updated = configure(&paths).unwrap();
+                assert_eq!(updated.action_result, "updated");
+                assert_eq!(
+                    read(&paths.skill.join("SKILL.md")).unwrap().unwrap(),
+                    client.skill()
+                );
+                assert_eq!(
+                    discoverable_skills(root.path()),
+                    vec![paths.skill.join("SKILL.md")]
+                );
+                assert!(recovery_files(&paths).iter().any(|p| {
+                    let value: Value =
+                        serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap();
+                    value["files"]["SKILL.md"] == old && value.get("config").is_none()
+                }));
+            }
+            let recovery_count = recovery_files(&paths).len();
+            let config_backups = fs::read_dir(paths.config.parent().unwrap())
+                .unwrap()
+                .count();
+            let preferences = root.path().join("integration-locations.json");
+            fs::write(&preferences, "{}").unwrap();
+            for _ in 0..3 {
+                assert!(
+                    configure_and_remember(&paths, Some((&preferences, "{}")))
+                        .unwrap()
+                        .configured
+                );
+            }
+            assert_eq!(recovery_files(&paths).len(), recovery_count);
+            assert_eq!(
+                fs::read_dir(paths.config.parent().unwrap())
+                    .unwrap()
+                    .count(),
+                config_backups
+            );
+            remove(&paths).unwrap();
+            assert!(discoverable_skills(root.path()).is_empty());
+            assert_eq!(recovery_files(&paths).len(), recovery_count + 1);
+        }
+    }
+
+    #[test]
+    fn explicit_updates_and_removal_retire_only_owned_legacy_backups() {
+        for client in [Client::Codex, Client::ClaudeCode, Client::DeepseekHarness] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = fixture(root.path(), client);
+            configure(&paths).unwrap();
+            let one = legacy_backup_fixture(&paths);
+            let two = legacy_backup_fixture(&paths);
+            let before = fs::read(one.join("SKILL.md")).unwrap();
+            let status = configure(&paths).unwrap(); // Current integration is a no-op; retirement is explicit.
+            assert!(status.configured);
+            assert!(!one.exists() && !two.exists());
+            assert_eq!(
+                discoverable_skills(root.path()),
+                vec![paths.skill.join("SKILL.md")]
+            );
+            assert_eq!(recovery_files(&paths).len(), 2);
+            for recovery in recovery_files(&paths) {
+                let value: Value =
+                    serde_json::from_str(&fs::read_to_string(recovery).unwrap()).unwrap();
+                assert_eq!(value["format"], "todolist-skill-recovery");
+                assert_eq!(
+                    value["files"]["SKILL.md"].as_str().unwrap().as_bytes(),
+                    before
+                );
+            }
+            let three = legacy_backup_fixture(&paths);
+            remove(&paths).unwrap();
+            assert!(!three.exists());
+            assert!(discoverable_skills(root.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn uncertain_legacy_names_markers_and_contents_are_preserved_with_notice() {
+        for client in [Client::Codex, Client::ClaudeCode, Client::DeepseekHarness] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = fixture(root.path(), client);
+            configure(&paths).unwrap();
+            let unknown = legacy_backup_fixture(&paths);
+            fs::write(unknown.join("user-file.txt"), "keep me").unwrap();
+            let unowned = legacy_backup_fixture(&paths);
+            fs::write(unowned.join(MARKER), "not TodoList").unwrap();
+            let malformed = paths
+                .skill
+                .with_file_name("todolist-mcp.todolist-backup-not-a-uuid");
+            fs::create_dir_all(&malformed).unwrap();
+            fs::write(malformed.join("SKILL.md"), "keep unknown name").unwrap();
+            let other = paths.skill.with_file_name("another-skill");
+            fs::create_dir_all(&other).unwrap();
+            fs::write(other.join("SKILL.md"), "unrelated Skill").unwrap();
+            let status = configure(&paths).unwrap();
+            assert!(status.configured);
+            for kept in [&unknown, &unowned, &malformed] {
+                assert!(kept.join("SKILL.md").exists());
+                assert!(status
+                    .message
+                    .contains(kept.file_name().unwrap().to_str().unwrap()));
+            }
+            assert_eq!(
+                fs::read_to_string(unknown.join("user-file.txt")).unwrap(),
+                "keep me"
+            );
+            assert_eq!(
+                fs::read_to_string(other.join("SKILL.md")).unwrap(),
+                "unrelated Skill"
+            );
+            assert!(!status.message.contains("another-skill"));
+            remove(&paths).unwrap();
+            assert!(unknown.join("SKILL.md").exists() && unowned.join("SKILL.md").exists());
+        }
+    }
+
+    #[test]
+    fn a_conflicting_recovery_file_cannot_fail_configuration_or_destroy_the_original() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = fixture(root.path(), Client::ClaudeCode);
+        configure(&paths).unwrap();
+        let legacy = legacy_backup_fixture(&paths);
+        let suffix = legacy
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .strip_prefix("todolist-mcp.todolist-backup-")
+            .unwrap();
+        let recovery = paths
+            .skill
+            .with_file_name(format!("todolist-mcp.todolist-recovery-{suffix}.json"));
+        fs::write(&recovery, "unowned recovery contents").unwrap();
+        let status = configure(&paths).unwrap();
+        assert!(status.configured);
+        assert!(status.message.contains("内容不同"));
+        assert!(legacy.join("SKILL.md").exists());
+        assert_eq!(
+            fs::read_to_string(recovery).unwrap(),
+            "unowned recovery contents"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn held_legacy_skill_reports_retirement_failure_without_rolling_back_success() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let paths = fixture(root.path(), Client::ClaudeCode);
+        configure(&paths).unwrap();
+        let legacy = legacy_backup_fixture(&paths);
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(legacy.join("SKILL.md"))
+            .unwrap();
+        fs::write(paths.skill.join("SKILL.md"), "old current skill").unwrap();
+        let status = configure(&paths).unwrap();
+        assert!(status.configured && status.action_result == "updated");
+        assert!(legacy.join("SKILL.md").exists());
+        assert!(status.message.contains("未完全退役"));
+        let count = recovery_files(&paths).len();
+        assert!(configure(&paths).unwrap().configured);
+        assert_eq!(recovery_files(&paths).len(), count);
+        drop(held);
+        assert!(configure(&paths).unwrap().configured);
+        assert!(!legacy.exists());
+        assert_eq!(recovery_files(&paths).len(), count);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn legacy_junctions_and_linked_children_are_preserved_without_following_them() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = fixture(root.path(), Client::Codex);
+        configure(&paths).unwrap();
+        let outside = root.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("SKILL.md"), "outside Skill").unwrap();
+        fs::write(outside.join(MARKER), "app.todolist.desktop\n").unwrap();
+        let junction = paths.skill.with_file_name(format!(
+            "todolist-mcp.todolist-backup-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let child = legacy_backup_fixture(&paths);
+        fs::remove_file(child.join(MARKER)).unwrap();
+        for link in [&junction, &child.join(MARKER)] {
+            let result = std::process::Command::new("cmd.exe")
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(link)
+                .arg(&outside)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        let status = configure(&paths).unwrap();
+        assert!(status.configured && status.message.contains("链接"));
+        assert!(junction.join("SKILL.md").exists() && child.join("SKILL.md").exists());
+        assert_eq!(
+            fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+            "outside Skill"
+        );
+        let mut unsafe_paths = paths.clone();
+        unsafe_paths.skill = junction.join("current");
+        assert!(configure(&unsafe_paths).is_err());
+        fs::remove_dir(&junction).unwrap();
+        fs::remove_dir(child.join(MARKER)).unwrap();
     }
     #[test]
     fn independent_lifecycle_preserves_unrelated_settings_and_backups() {
@@ -1141,7 +1759,11 @@ mod tests {
     }
     #[test]
     fn missing_skill_component_is_repairable_and_unknown_files_survive_removal() {
-        for client in [Client::ClaudeCode, Client::DeepseekHarness] {
+        for client in [
+            Client::ClaudeCode,
+            Client::DeepseekHarness,
+            Client::Antigravity,
+        ] {
             let root = tempfile::tempdir().unwrap();
             let paths = fixture(root.path(), client);
             configure(&paths).unwrap();
@@ -1159,25 +1781,42 @@ mod tests {
     }
     #[test]
     fn rollback_restores_exact_files_and_unique_backups_are_outside_skill() {
-        let root = tempfile::tempdir().unwrap();
-        let paths = fixture(root.path(), Client::ClaudeCode);
-        configure(&paths).unwrap();
-        let old = read(&paths.config).unwrap().unwrap();
-        let skill = read(&paths.skill.join("SKILL.md")).unwrap().unwrap();
-        let result: Result<(), String> = transaction(&paths, None, || {
-            atomic_write(&paths.config, "changed")?;
-            fs::remove_file(paths.skill.join("SKILL.md")).unwrap();
-            Err("fixture failure".into())
-        });
-        assert!(result.unwrap_err().contains("已回退"));
-        assert_eq!(read(&paths.config).unwrap().unwrap(), old);
-        assert_eq!(read(&paths.skill.join("SKILL.md")).unwrap().unwrap(), skill);
-        assert!(inspect(&paths).unwrap().configured);
-        assert!(fs::read_dir(&paths.skill).unwrap().all(|e| !e
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .contains("backup")));
+        for client in [
+            Client::Codex,
+            Client::ClaudeCode,
+            Client::DeepseekHarness,
+            Client::Antigravity,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = fixture(root.path(), client);
+            configure(&paths).unwrap();
+            let old = read(&paths.config).unwrap().unwrap();
+            let skill = read(&paths.skill.join("SKILL.md")).unwrap().unwrap();
+            let result: Result<(), String> = transaction(&paths, None, || {
+                atomic_write(&paths.config, "changed")?;
+                fs::remove_file(paths.skill.join("SKILL.md")).unwrap();
+                Err("fixture failure".into())
+            });
+            assert!(result.unwrap_err().contains("已回退"));
+            assert_eq!(read(&paths.config).unwrap().unwrap(), old);
+            assert_eq!(read(&paths.skill.join("SKILL.md")).unwrap().unwrap(), skill);
+            assert!(inspect(&paths).unwrap().configured);
+            assert_eq!(
+                discoverable_skills(root.path()),
+                vec![paths.skill.join("SKILL.md")]
+            );
+            let recoveries = recovery_files(&paths);
+            assert_eq!(recoveries.len(), 1);
+            let recovery: Value =
+                serde_json::from_str(&fs::read_to_string(&recoveries[0]).unwrap()).unwrap();
+            assert_eq!(recovery["files"]["SKILL.md"], skill);
+            assert!(recovery.get("config").is_none());
+            assert!(fs::read_dir(&paths.skill).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("backup")));
+        }
     }
     #[test]
     fn codex_legacy_origin_upgrade_retains_restricted_tools_and_migration() {
@@ -1300,7 +1939,12 @@ mod tests {
     #[test]
     #[cfg(not(feature = "production"))]
     fn development_never_reads_or_writes_real_client_configuration() {
-        for client in [Client::Codex, Client::ClaudeCode, Client::DeepseekHarness] {
+        for client in [
+            Client::Codex,
+            Client::ClaudeCode,
+            Client::DeepseekHarness,
+            Client::Antigravity,
+        ] {
             let status = ai_integration_status(
                 client,
                 Some(Locations {

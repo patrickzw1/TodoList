@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google Antigravity 接入 · 功能方案</title>
+  <link rel="stylesheet" href="../design.css">
+</head>
+<body>
+<main class="reading">
+  <a href="../index.html">返回 TodoList 设计索引</a>
+  <header>
+    <p class="meta">2026-11-27 · 功能流程 v0.1 · 实现待主审验收</p>
+    <h1>Google Antigravity 接入</h1>
+    <p>在「连接与权限」增加 Antigravity，沿用 Codex、Claude Code 和 DeepSeek Harness 的按客户端配置、更新与移除。由 Antigravity 通过 STDIO 启动已安装的 TodoList sidecar。</p>
+    <p class="meta">首版沿用现有连接卡。用户在列表中选择 Antigravity 并查看或确认该客户端的路径。<a href="../workbench-redesign/verify/antigravity-960.jpg">查看 960×640 界面</a></p>
+  </header>
+
+  <section aria-labelledby="locations">
+    <h2 id="locations">配置位置</h2>
+    <dl>
+      <dt>MCP 注册</dt>
+      <dd><code>~/.gemini/config/mcp_config.json</code> 中的 <code>mcpServers.todolist</code>。<code>command</code> 使用安装版 <code>todolist-mcp.exe</code> 的绝对路径。</dd>
+      <dt>全局 Skill</dt>
+      <dd><code>~/.gemini/config/skills/todolist-mcp/SKILL.md</code>。此全局目录由 Antigravity App 与 CLI 共用，确认时显示完整路径与作用范围。</dd>
+    </dl>
+    <p>主审核验记录显示本机 Antigravity.exe 为 2.35.2.0，正式 TodoList 为 0.2.23。MCP 配置文件已存在，<code>todolist</code> 注册和目标 Skill 均未发现。</p>
+    <p class="meta"><a href="https://antigravity.google/docs/mcp">Google Antigravity MCP 文档</a> · <a href="https://antigravity.google/docs/skills">Google Antigravity Skills 文档</a></p>
+  </section>
+
+  <section aria-labelledby="flow">
+    <h2 id="flow">配置与移除流程</h2>
+    <ol class="flow">
+      <li><h3>选择 Antigravity</h3><p>只读检测客户端、MCP 注册和 Skill。自动定位失败时，用户可以从 Antigravity 的「Copy Config File Path」取得配置路径，并在 TodoList 检查实际使用的绝对路径。</p></li>
+      <li>
+        <h3>按读取结果提供操作</h3>
+        <ul>
+          <li>缺少托管内容时，配置或补齐缺少的一项。</li>
+          <li>识别出当前托管内容后，可以原位更新或移除。命令路径迁移须核对旧归属并单独显示变更。</li>
+          <li>同名项归属不明、文件读失败或路径未检查时，保留内容并提示重新检查。</li>
+        </ul>
+      </li>
+      <li><h3>确认本次操作与两条路径</h3><p>确认只对所选客户端及所示路径有效。切换客户端、修改路径或刷新失败后，取消该确认。</p></li>
+      <li><h3>保存后重新读取磁盘</h3><p>仅合并或移除本应用拥有的 <code>mcpServers.todolist</code> 和 Skill，保留其他注册及现有工具限制。原位更新使用现有 JSON 恢复机制。内容已一致时直接返回。写入中断时恢复已改文件并报告当前状态。</p></li>
+      <li><h3>在 Antigravity 重新加载</h3><p>配置或更新后，用只读 <code>list_projects</code> 验证调用，记录 Antigravity 版本、sidecar 构建及工具结果。移除后重新加载，确认本次注册和 Skill 已不再出现。</p></li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="states">
+    <h2 id="states">状态与操作</h2>
+    <div class="data-table"><table>
+      <thead><tr><th scope="col">状态</th><th scope="col">呈现与处理</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">读取中或读取失败</th><td>保持操作禁用，刷新成功后恢复。客户端未发现时提供手动核对路径入口。</td></tr>
+        <tr><th scope="row">未配置或不完整</th><td>分别显示 MCP 注册、Skill 状态，提示可配置或补齐的部分。</td></tr>
+        <tr><th scope="row">可更新或待迁移</th><td>列出将修改的托管项。保留 <code>disabled</code>、<code>enabledTools</code>、<code>disabledTools</code> 和每个工具的现有设置。</td></tr>
+        <tr><th scope="row">同名冲突</th><td>标明冲突来自注册还是 Skill，保留冲突内容。用户处理后刷新状态。</td></tr>
+        <tr><th scope="row">配置已同步</th><td>磁盘状态可确认。运行默认显示未验证，客户端实际成功调用后才记录该次 <code>list_projects</code> 验证。</td></tr>
+        <tr><th scope="row">移除后</th><td>分别刷新注册与 Skill。其他客户端、全局设置、其他服务器和任务数据保留。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section aria-labelledby="acceptance">
+    <h2 id="acceptance">首版选择与验收</h2>
+    <p class="callout"><strong>首版使用通用 AI 来源。</strong> 所配命令使用空参数，兼容 0.2.23 已发布 sidecar。</p>
+    <p>用隔离夹具核对首次配置、无变化重试、原位更新、单客户端移除、同名冲突与写入恢复。真实客户端验收仅据获准环境中实际成功的 <code>list_projects</code> 记录连通结果。</p>
+    <p class="meta"><a href="../../AI_INTEGRATION.md">现有客户端生命周期</a> · <a href="../../../crates/todolist-mcp/src/main.rs">sidecar 参数入口</a></p>
+  </section>
+  <footer>磁盘生命周期已使用隔离夹具验证。实际 Antigravity 客户端的运行连接待安装后核验。</footer>
+</main>
+</body>
+</html>

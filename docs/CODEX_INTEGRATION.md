@@ -1,6 +1,6 @@
 # Codex integration
 
-The integration page now also supports Claude Code and DeepSeek Harness independently. See [AI integration](AI_INTEGRATION.md) for client paths, origin, ownership and verification. This document retains Codex-specific compatibility and tool guidance.
+The integration page also supports Claude Code, DeepSeek Harness and Google Antigravity independently. See [AI integration](AI_INTEGRATION.md) for client paths, origin, ownership and verification. This document retains Codex-specific compatibility and tool guidance.
 
 TodoList remains a standalone local app. The optional `todolist-mcp` STDIO server gives Codex seventeen tools:
 
@@ -32,7 +32,7 @@ The MCP registration and the Skill have different jobs:
 
 The packaged app's integration page offers an explicit `Configure Codex integration` action. Before writing, it shows the exact paths and asks for confirmation. It registers the bundled MCP sidecar in the current user's `~/.codex/config.toml` and installs the usage Skill at `~/.agents/skills/todolist-mcp`. It never writes to the Codex application or source directory.
 
-Existing TOML settings and other MCP servers are preserved. TodoList creates a timestamped backup before changing an existing config, refuses to replace a different `todolist` registration or an unowned Skill directory, and removes only entries and files carrying its ownership marker. A newer TodoList release may update a Skill previously installed by TodoList.
+Existing TOML settings, other MCP servers and user-restricted tool lists are preserved. TodoList creates a timestamped backup before changing an existing config, refuses to replace a different `todolist` registration or an unowned Skill directory, and removes only entries and files carrying its ownership marker. A newer TodoList release replaces the existing managed `SKILL.md` in place. Skill recovery data is a sibling JSON file, not a second discoverable Skill. During an explicit configure/update/remove, exactly identified older backup directories are converted to this format; unknown or linked content is retained with a notice. No-op updates create no backup. See [ownership and recovery details](AI_INTEGRATION.md#ownership-backups-and-failures).
 
 Development desktop builds cannot configure or remove the global integration. Their integration page shows the project-local `todolist_dev` entry. To prepare its sidecar:
 

@@ -350,6 +350,9 @@ pub fn apply(
     if !changed {
         return Err("No task fields were provided to update".into());
     }
+    if task.same_content(&old) {
+        return Ok(json!({"id":task.id,"version":task.version,"changedItems":items}));
+    }
     if task.status == TaskStatus::Done
         && (old.status != TaskStatus::Done || input.acceptance_criteria.is_some())
         && task.acceptance_criteria.iter().any(|c| !c.completed)

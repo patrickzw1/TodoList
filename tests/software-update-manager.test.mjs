@@ -18,12 +18,21 @@ function fakeUpdate(version) {
   };
 }
 
+function checkResult(update, now = Date.now(), failure = null) {
+  return { update, checked: true, status: {
+    lastAttemptAt: now, lastCheckedAt: now,
+    nextAutomaticCheckAt: now + UPDATE_CHECK_INTERVAL_MS,
+    nextManualCheckAt: now + 60_000, retryAt: null,
+    lastResult: failure ? "error" : update ? "available" : "latest", message: failure,
+  } };
+}
+
 test("browser preview reports the build version without accessing the desktop update source", async () => {
   let checks = 0;
   const manager = createSoftwareUpdateManager({
     desktop: false,
     buildVersion: "0.2.2-preview",
-    check: async () => { checks += 1; return null; },
+    check: async () => { checks += 1; return checkResult(null); },
   });
   await manager.initialize();
   assert.equal(manager.getSnapshot().currentVersion, "0.2.2-preview");
@@ -38,8 +47,9 @@ test("desktop initialization shares the real current and available versions with
   const manager = createSoftwareUpdateManager({
     desktop: true,
     buildVersion: "fallback",
+    now: () => 1_000,
     getCurrentVersion: async () => "0.2.2",
-    check: async () => { checks += 1; return update; },
+    check: async () => { checks += 1; return checkResult(update, 1_000); },
   });
   await manager.initialize();
   assert.equal(checks, 1);
@@ -52,6 +62,13 @@ test("desktop initialization shares the real current and available versions with
     progress: null,
     componentStatus: null,
     recovery: null,
+    lastAttemptAt: 1_000,
+    lastCheckedAt: 1_000,
+    nextAutomaticCheckAt: 1_000 + UPDATE_CHECK_INTERVAL_MS,
+    nextManualCheckAt: 61_000,
+    retryAt: null,
+    checkBlockedUntil: 61_000,
+    lastCheckResult: "available",
   });
   assert.equal(update.calls.download, 0);
   assert.equal(update.calls.install, 0);
@@ -71,9 +88,9 @@ test("checks are deduplicated, throttled for six hours and close replaced update
     getCurrentVersion: async () => "0.2.2",
     check: async () => {
       checks += 1;
-      if (checks === 1) return first;
+      if (checks === 1) return checkResult(first, clock);
       await gate;
-      return second;
+      return checkResult(second, clock);
     },
   });
   await manager.initialize();
@@ -112,7 +129,7 @@ test("download and installation begin only after the explicit action", async () 
     desktop: true,
     buildVersion: "0.2.2",
     getCurrentVersion: async () => "0.2.2",
-    check: async () => update,
+    check: async () => checkResult(update),
     relaunch: async () => { relaunches += 1; },
   });
   await manager.initialize();
@@ -130,7 +147,7 @@ test("disposing during a check closes the late update and publishes nothing else
   const manager = createSoftwareUpdateManager({
     desktop: true,
     buildVersion: "0.2.2",
-    check: async () => { await gate; return update; },
+    check: async () => { await gate; return checkResult(update); },
   });
   const pending = manager.checkForUpdate();
   await manager.dispose();
@@ -147,7 +164,7 @@ test("highest release resource failures remain errors and six-hour throttling st
     desktop: true,
     buildVersion: "0.2.9",
     now: () => clock,
-    check: async () => { checks += 1; throw message; },
+    check: async () => { checks += 1; return checkResult(null, clock, message); },
   });
   await manager.initialize();
   assert.equal(manager.getSnapshot().phase, "error");
@@ -167,7 +184,7 @@ test("Tauri download signature rejection never invokes installation or relaunch"
   const manager = createSoftwareUpdateManager({
     desktop: true,
     buildVersion: "0.2.9",
-    check: async () => update,
+    check: async () => checkResult(update),
     relaunch: async () => { relaunches += 1; },
   });
   await manager.initialize();
@@ -176,4 +193,92 @@ test("Tauri download signature rejection never invokes installation or relaunch"
   assert.equal(relaunches, 0);
   assert.equal(manager.getSnapshot().phase, "error");
   assert.match(manager.getSnapshot().message, /签名验证失败/);
+});
+
+test("server cooldown blocks manual and focus checks without claiming latest", async () => {
+  let clock = 1_000;
+  let checks = 0;
+  const manager = createSoftwareUpdateManager({
+    desktop: true, buildVersion: "0.2.23", now: () => clock,
+    check: async (automatic) => {
+      checks += 1;
+      assert.equal(automatic, true);
+      return { update: null, checked: true, status: {
+        lastAttemptAt: clock, lastCheckedAt: clock,
+        nextAutomaticCheckAt: clock + UPDATE_CHECK_INTERVAL_MS,
+        nextManualCheckAt: clock + 60_000, retryAt: clock + 120_000,
+        lastResult: "error", message: "版本检查失败：GitHub 请求已限流。",
+      } };
+    },
+  });
+  await manager.initialize();
+  await manager.checkForUpdate();
+  await manager.checkIfStale();
+  assert.equal(checks, 1);
+  assert.equal(manager.getSnapshot().phase, "error");
+  assert.equal(manager.getSnapshot().retryAt, 121_000);
+  assert.equal(manager.getSnapshot().checkBlockedUntil, 121_000);
+  assert.equal(manager.getSnapshot().availableVersion, null);
+});
+
+test("manual checking has a short interval and automatic focus still uses six hours", async () => {
+  let clock = 1_000;
+  const modes = [];
+  const manager = createSoftwareUpdateManager({
+    desktop: true, buildVersion: "0.2.23", now: () => clock,
+    check: async (automatic) => { modes.push(automatic); return checkResult(null, clock); },
+  });
+  await manager.initialize();
+  await manager.checkForUpdate();
+  clock = 60_999;
+  await manager.checkForUpdate();
+  assert.deepEqual(modes, [true]);
+  clock = 61_000;
+  await manager.checkForUpdate();
+  await manager.checkIfStale();
+  assert.deepEqual(modes, [true, false]);
+  clock += UPDATE_CHECK_INTERVAL_MS;
+  await manager.checkIfStale();
+  assert.deepEqual(modes, [true, false, true]);
+});
+
+test("restart receives remembered status without presenting it as a fresh successful check", async () => {
+  for (const previous of ["latest", "available", "error"]) {
+    const status = checkResult(null, 1_000).status;
+    status.lastResult = previous;
+    status.message = previous === "error" ? "版本检查失败：GitHub Release 服务返回 HTTP 403 Forbidden，请稍后重试。" : null;
+    const manager = createSoftwareUpdateManager({
+      desktop: true, buildVersion: "0.2.23", now: () => 2_000,
+      check: async () => ({ update: null, checked: false, status }),
+    });
+    await manager.initialize();
+    assert.equal(manager.getSnapshot().phase, previous === "error" ? "error" : "idle");
+    assert.equal(manager.getSnapshot().availableVersion, null);
+    assert.equal(manager.getSnapshot().lastCheckedAt, 1_000);
+    assert.equal(manager.getSnapshot().retryAt, null);
+    assert.doesNotMatch(manager.getSnapshot().message, /当前已经是最新/);
+  }
+});
+
+test("a backend skip after another window checked closes the old install handle", async () => {
+  let clock = 1_000;
+  let calls = 0;
+  const update = fakeUpdate("0.2.24");
+  const manager = createSoftwareUpdateManager({
+    desktop: true, buildVersion: "0.2.23", now: () => clock,
+    check: async () => {
+      calls += 1;
+      const result = checkResult(calls === 1 ? update : null, clock);
+      result.checked = calls === 1;
+      return result;
+    },
+  });
+  await manager.initialize();
+  clock = 61_000;
+  await manager.checkForUpdate();
+  assert.equal(update.calls.close, 1);
+  assert.equal(manager.getSnapshot().availableVersion, null);
+  assert.equal(manager.getSnapshot().phase, "idle");
+  assert.equal(await manager.downloadAndInstall(), false);
+  assert.equal(update.calls.install, 0);
 });

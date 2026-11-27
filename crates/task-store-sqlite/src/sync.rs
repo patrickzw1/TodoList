@@ -347,7 +347,7 @@ impl SqliteTaskStore {
         let current = Self::load_from_connection(&tx)?.ok_or("workspace is not initialized")?;
         let (mut updated, mut result) = mutate(current.clone())?;
         updated.trim_activity();
-        Self::reconcile_completion_times(&mut updated, Some(&current));
+        Self::reconcile_task_times(&mut updated, Some(&current));
         updated.validate()?;
         updated.validate_completion_changes(&current)?;
         result["workspaceVersion"] = json!(updated.version);

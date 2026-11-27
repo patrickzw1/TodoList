@@ -2,7 +2,7 @@
 
 [简体中文](README.md)
 
-TodoList is a local-first desktop task app. The Windows app works on its own. You can also choose to connect Codex, Claude Code, or DeepSeek Harness to your tasks through a local MCP server.
+TodoList is a local-first desktop task app. The Windows app works on its own and can connect Codex, Claude Code, DeepSeek Harness, or Google Antigravity through a local MCP server.
 
 ## Download and use on Windows
 
@@ -20,7 +20,9 @@ Main features:
 
 ## AI client integration
 
-In **Connections & Permissions**, select Codex, Claude Code, or DeepSeek Harness, then confirm configuration, update, or removal. Each client's integration is managed separately. Removing one does not remove another client's integration or task data. Integration uses the bundled local STDIO MCP server and a user-level Skill. It does not change client installation directories, grant tool permissions, open the task board, or pin a note automatically. “Configured” describes synchronized files on disk; confirm the live connection in the client. See [AI integration](docs/AI_INTEGRATION.md) for paths and permission boundaries and [Codex integration](docs/CODEX_INTEGRATION.md) for Codex compatibility.
+In **Connections & Permissions**, select Codex, Claude Code, DeepSeek Harness, or Google Antigravity, then confirm configuration, update, or removal. Each client's integration is managed separately. Removing one does not remove another client's integration or task data. Integration uses the bundled local STDIO MCP server and a user-level Skill. It does not change client installation directories, grant tool permissions, open the task board, or pin a note automatically. “Configured” describes synchronized files on disk. Confirm the live connection in the client. See [AI integration](docs/AI_INTEGRATION.md) for paths and permission boundaries and [Codex integration](docs/CODEX_INTEGRATION.md) for Codex compatibility.
+
+An update replaces the current Skill in place. Recovery backups are JSON files rather than another discoverable `SKILL.md`. Explicit configuration, update or removal retires only strictly identified TodoList legacy backups; unknown content, links and occupied files are preserved with a notice. Other MCP entries and user tool restrictions remain intact.
 
 A user successfully invoked the read-only TodoList MCP `list_projects` tool in DeepSeek Harness desktop 0.2.0-rc.2. Other tools and write operations have not been tested in that client.
 

@@ -111,19 +111,24 @@ fn load_workspace_version(state: tauri::State<'_, AppState>) -> Result<Option<u6
 }
 
 #[tauri::command]
-fn save_workspace(state: tauri::State<'_, AppState>, workspace: Workspace) -> Result<(), String> {
+fn save_workspace(
+    state: tauri::State<'_, AppState>,
+    workspace: Workspace,
+) -> Result<Workspace, String> {
     let started = Instant::now();
     state
         .logger
         .record(Record::new("ipc_arrived", "save_workspace", "started"));
-    if let Err(error) = state.store.save_workspace(&workspace) {
-        state.logger.record(
-            Record::new("save_failed", "save_workspace", "error")
-                .error(&error)
-                .duration(started.elapsed()),
-        );
-        return Err(error);
-    }
+    let saved = state
+        .store
+        .save_workspace(&workspace)
+        .inspect_err(|error| {
+            state.logger.record(
+                Record::new("save_failed", "save_workspace", "error")
+                    .error(&error)
+                    .duration(started.elapsed()),
+            );
+        })?;
     state.logger.record(
         Record::new("save_completed", "save_workspace", "ok")
             .workspace(
@@ -139,7 +144,7 @@ fn save_workspace(state: tauri::State<'_, AppState>, workspace: Workspace) -> Re
             .record(Record::new("cleanup_failed", "managed_files", "error").error(&error));
         eprintln!("Could not reconcile TodoList managed files after save: {error}");
     }
-    Ok(())
+    Ok(saved)
 }
 
 #[tauri::command]

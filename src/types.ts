@@ -42,6 +42,8 @@ export interface Task {
   description: string;
   status: TaskStatus;
   completedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   priority: Priority;
   dueLabel: string;
   dueDate: string;

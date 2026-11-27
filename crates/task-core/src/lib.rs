@@ -29,7 +29,7 @@ pub enum Priority {
     High,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subtask {
     pub id: String,
@@ -37,7 +37,7 @@ pub struct Subtask {
     pub completed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceptanceCriterion {
     pub id: String,
@@ -73,7 +73,7 @@ where
         .collect())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityItem {
     pub id: String,
@@ -82,7 +82,7 @@ pub struct ActivityItem {
     pub at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedFile {
     pub id: String,
@@ -93,7 +93,7 @@ pub struct ManagedFile {
     pub added_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
@@ -103,6 +103,10 @@ pub struct Task {
     pub status: TaskStatus,
     #[serde(default)]
     pub completed_at: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     pub priority: Priority,
     pub due_label: String,
     pub due_date: String,
@@ -124,6 +128,93 @@ pub struct Task {
 }
 
 impl Task {
+    pub fn same_content(&self, other: &Self) -> bool {
+        let content = |task: &Self| {
+            let mut task = task.clone();
+            task.version = 0;
+            task.activity.clear();
+            task.created_at = None;
+            task.updated_at = None;
+            task.completed_at = None;
+            task
+        };
+        content(self) == content(other)
+    }
+
+    /// Recover only named write events. A retained event is never implicitly a creation.
+    pub fn backfill_audit_times(&mut self) {
+        let creation = |action: &str| {
+            matches!(
+                action,
+                "创建任务"
+                    | "Codex 创建任务"
+                    | "Claude Code 创建任务"
+                    | "DeepSeek Harness 创建任务"
+                    | "AI 创建任务"
+            )
+        };
+        let timestamp = |item: &ActivityItem| {
+            chrono::DateTime::parse_from_rfc3339(&item.at)
+                .ok()
+                .map(|time| time.to_rfc3339())
+        };
+        let file_event = |action: &str| {
+            ["Codex", "Claude Code", "DeepSeek Harness", "AI"]
+                .iter()
+                .any(|client| {
+                    action
+                        .strip_prefix(&format!("{client} "))
+                        .is_some_and(|action| {
+                            matches!(action, "添加附件" | "添加图片" | "移除托管文件关联")
+                        })
+                })
+        };
+        if self.created_at.is_none() {
+            self.created_at = self
+                .activity
+                .iter()
+                .find(|item| creation(&item.action) && timestamp(item).is_some())
+                .and_then(timestamp);
+        }
+        if self.updated_at.is_none() {
+            self.updated_at = self
+                .activity
+                .last()
+                .filter(|item| {
+                    creation(&item.action)
+                        || file_event(&item.action)
+                        || matches!(
+                            item.action.as_str(),
+                            "编辑任务"
+                                | "更新子任务"
+                                | "更新验收标准"
+                                | "置顶到桌面"
+                                | "取消桌面置顶"
+                                | "归档任务"
+                                | "恢复归档任务"
+                                | "批量归档任务"
+                                | "项目删除前转移任务"
+                                | "添加图片"
+                                | "添加附件"
+                                | "移除图片"
+                                | "移除附件"
+                                | "完成任务"
+                                | "重新打开任务"
+                                | "取消验收并重新打开任务"
+                                | "状态更新为待开始"
+                                | "状态更新为进行中"
+                                | "状态更新为已阻塞"
+                                | "状态更新为已完成"
+                                | "从便签完成任务"
+                                | "Codex 更新任务"
+                                | "Claude Code 更新任务"
+                                | "DeepSeek Harness 更新任务"
+                                | "AI 更新任务"
+                        )
+                })
+                .and_then(timestamp);
+        }
+    }
     /// Only an explicit completion event with an offset can date a legacy
     /// completed task. An unknown event may hide a later status cycle.
     pub fn backfill_completed_at(&mut self) {
@@ -297,6 +388,17 @@ impl Workspace {
 
     pub fn validate(&self) -> Result<(), String> {
         for task in &self.tasks {
+            for (name, timestamp) in [
+                ("createdAt", &task.created_at),
+                ("updatedAt", &task.updated_at),
+            ] {
+                if timestamp
+                    .as_ref()
+                    .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+                {
+                    return Err(format!("task {} has an invalid {name}", task.id));
+                }
+            }
             if task
                 .completed_at
                 .as_ref()
@@ -332,6 +434,8 @@ mod tests {
                 description: String::new(),
                 status: TaskStatus::Todo,
                 completed_at: None,
+                created_at: None,
+                updated_at: None,
                 priority: Priority::Medium,
                 due_label: "Today".into(),
                 due_date: "2026-09-01".into(),
@@ -387,6 +491,8 @@ mod tests {
             description: String::new(),
             status: TaskStatus::Todo,
             completed_at: None,
+            created_at: None,
+            updated_at: None,
             priority: Priority::Medium,
             due_label: "Today".into(),
             due_date: "2026-09-04".into(),
@@ -415,6 +521,33 @@ mod tests {
         assert_eq!(task.activity.last().unwrap().id, "104");
     }
 
+    #[test]
+    fn legacy_audit_times_require_explicit_offset_aware_events() {
+        let mut task = task("t", "p", false);
+        let event = |action: &str, at: &str| ActivityItem {
+            id: action.into(),
+            action: action.into(),
+            actor: "user".into(),
+            at: at.into(),
+        };
+        task.activity = vec![event("编辑任务", "2026-11-10T00:00:00Z")];
+        task.backfill_audit_times();
+        assert!(task.created_at.is_none());
+        assert!(task.updated_at.is_some());
+        task.updated_at = None;
+        task.activity = vec![
+            event("创建任务", "2026-11-01 10:00"),
+            event("未知操作", "2026-11-11T00:00:00Z"),
+        ];
+        task.backfill_audit_times();
+        assert!(task.created_at.is_none());
+        assert!(task.updated_at.is_none());
+        task.activity = vec![event("Codex 创建任务", "2026-11-01T10:00:00+08:00")];
+        task.backfill_audit_times();
+        assert_eq!(task.created_at, task.updated_at);
+        assert!(task.created_at.is_some());
+    }
+
     fn task(id: &str, project_id: &str, archived: bool) -> Task {
         Task {
             id: id.into(),
@@ -423,6 +556,8 @@ mod tests {
             description: String::new(),
             status: TaskStatus::Todo,
             completed_at: None,
+            created_at: None,
+            updated_at: None,
             priority: Priority::Medium,
             due_label: "Today".into(),
             due_date: "2026-09-07".into(),

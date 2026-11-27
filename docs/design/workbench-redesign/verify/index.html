@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TodoList 确认稿与实现对照</title>
+  <link rel="stylesheet" href="../../design.css">
+  <style>
+    main { max-width: 1560px; }
+    .compare-mask { display: grid; max-width: 1100px; --reveal: 50%; }
+    .compare-mask img { grid-area: 1 / 1; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
+    .compare-mask img:last-child { clip-path: inset(0 calc(100% - var(--reveal)) 0 0); }
+    details { margin-top: 14px; }
+    summary { cursor: pointer; font-weight: 600; }
+    .slider { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+    .slider input { width: min(360px, 100%); }
+    .slider output { min-width: 4ch; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="meta"><a href="../../index.html">设计索引</a> · <a href="../index.html">候选图稿</a> · 2026-11-27</p>
+    <h1>确认稿与实现对照</h1>
+    <p>Edge 实际渲染与用户确认附图采用同一 1536 × 1024 视口、100% 缩放、七条任务、手动顺序和选中状态。下方两个原图可点击放大。</p>
+  </header>
+  <section aria-labelledby="compare">
+    <h2 id="compare">项目列表与任务详情</h2>
+    <div class="pair">
+      <figure>
+        <a href="../images/approved-2026-11-27.png"><img src="../images/approved-2026-11-27.png" width="1536" height="1024" alt="11 月 27 日用户确认附图"></a>
+        <figcaption>确认附图</figcaption>
+      </figure>
+      <figure>
+        <a href="actual-approved-1536.jpg"><img src="actual-approved-1536.jpg" width="1536" height="1024" alt="相同任务和视口的实际 TodoList 界面"></a>
+        <figcaption>当前实现 · Edge 1536 × 1024</figcaption>
+      </figure>
+    </div>
+    <details>
+      <summary>叠加查看对齐</summary>
+      <div class="slider"><label for="reveal">左侧显示的实现比例</label><input type="range" id="reveal" min="0" max="100" value="50"><output for="reveal" id="reveal-value">50%</output></div>
+      <div class="compare-mask">
+        <img src="../images/approved-2026-11-27.png" width="1536" height="1024" loading="lazy" alt="确认附图">
+        <img src="actual-approved-1536.jpg" width="1536" height="1024" loading="lazy" alt="实现截图">
+      </div>
+    </details>
+    <p>按附图对齐 256 像素侧栏、156 像素表头起点、选中行左蓝边和 585 像素详情。详情打开前后工作区宽度相同。中文使用 Windows 微软雅黑，图标沿用项目现有 Phosphor。实际界面另外保留了便签、设置和连接状态、空图片入口、依赖与任务来源及时间信息。</p>
+  </section>
+  <section aria-labelledby="fold">
+    <h2 id="fold">长描述与窄窗</h2>
+    <div class="pair">
+      <figure>
+        <a href="description-collapsed-960.jpg"><img src="description-collapsed-960.jpg" width="960" height="640" loading="lazy" alt="窄窗四行描述预览，有展开全文入口"></a>
+        <figcaption>实际收起 · 960 × 640</figcaption>
+      </figure>
+      <figure>
+        <a href="description-expanded-960.jpg"><img src="description-expanded-960.jpg" width="960" height="640" loading="lazy" alt="同一条描述展开，长路径完整换行"></a>
+        <figcaption>实际展开 · 960 × 640</figcaption>
+      </figure>
+    </div>
+    <p>折叠高度为 96 像素，行高 24 像素。全宽下一份恰好四行的描述直接显示。同一任务从另一个浏览器标签刷新后仍保持展开，换任务再打开时恢复折叠。编辑器读到完整路径、段落换行和刷新追加的内容。</p>
+  </section>
+  <section aria-labelledby="extension">
+    <h2 id="extension">页面延展</h2>
+    <div class="pair">
+      <figure>
+        <a href="board-960.jpg"><img src="board-960.jpg" width="960" height="640" loading="lazy" alt="蓝灰列头和紧凑看板卡片"></a>
+        <figcaption>看板 · 960 × 640</figcaption>
+      </figure>
+      <figure>
+        <a href="editor-960.jpg"><img src="editor-960.jpg" width="960" height="640" loading="lazy" alt="编辑器含完整描述与日期输入"></a>
+        <figcaption>编辑器 · 960 × 640</figcaption>
+      </figure>
+      <figure>
+        <a href="settings-960.jpg"><img src="settings-960.jpg" width="960" height="640" loading="lazy" alt="设置的数据、版本和诊断区域"></a>
+        <figcaption>设置 · 960 × 640</figcaption>
+      </figure>
+      <figure>
+        <a href="antigravity-960.jpg"><img src="antigravity-960.jpg" width="960" height="640" loading="lazy" alt="连接卡中选中的 Antigravity，分别显示 MCP、Skill 和运行连接"></a>
+        <figcaption>连接与权限 · 960 × 640</figcaption>
+      </figure>
+      <figure class="compact">
+        <a href="sticky-360.jpg"><img src="sticky-360.jpg" width="360" height="330" loading="lazy" alt="独立便签中的置顶任务和打开任务台操作"></a>
+        <figcaption>桌面便签浏览器预览 · 360 × 330</figcaption>
+      </figure>
+    </div>
+  </section>
+  <section aria-labelledby="tests">
+    <h2 id="tests">实测操作</h2>
+    <ul>
+      <li>键盘打开与关闭详情，Tab 位于详情，关闭后焦点回到来源任务行。外露列表可滚动，点击底下的复选框只关闭详情。</li>
+      <li>详情下拉直接修改状态和优先级。未验收时阻止标记完成，勾选后完成并显示完成时间，重开清除本轮完成时间。</li>
+      <li>截止排序显示实际截止日期，完成行另示完成日期。升降序切换、手动顺序恢复及手柄键盘重排均已操作。</li>
+      <li>看板拖到「已阻塞」成功，可用状态选择器移回，四列独立滚动。编辑器对无效日期提示错误。</li>
+      <li>使用 End 键切到 Antigravity，卡片显示全局路径和独立的运行连接状态。磁盘配置另在隔离 Rust 夹具验证。</li>
+    </ul>
+    <p>当前画面来自浏览器。Antigravity 客户端连通与 Windows 原生便签窗口行为需在安装版核验。<a href="observations.json">浏览器实测记录</a> · <a href="fixture.html">同内容预览样例</a> · <a href="../../antigravity-integration/index.html">Antigravity 流程</a></p>
+    <p class="meta">复现页使用本机 Vite 5359 端口，运行 <code>npm run dev -- --host 127.0.0.1 --port 5359 --strictPort</code> 后访问本页同目录的 <code>fixture.html</code>。</p>
+  </section>
+</main>
+<script>
+  const reveal = document.getElementById("reveal");
+  reveal.addEventListener("input", () => {
+    const value = reveal.value + "%";
+    document.querySelector(".compare-mask").style.setProperty("--reveal", value);
+    document.getElementById("reveal-value").value = value;
+  });
+</script>
+</body>
+</html>

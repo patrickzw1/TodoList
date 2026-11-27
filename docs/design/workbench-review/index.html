@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TodoList 整体界面复查</title>
+  <link rel="stylesheet" href="../design.css">
+</head>
+<body>
+<main>
+  <a href="../index.html">返回 TodoList 设计索引</a>
+  <header>
+    <p class="meta">2026-11-27 · 复查记录 v0.1 · 建议待选定</p>
+    <h1>TodoList 整体界面复查</h1>
+    <p>建议优先处理详情的键盘焦点和截止日排序的阅读问题，再收紧窄屏看板与详情的内容占位。</p>
+    <p>取证来自 <code>9781469</code> 上含 11 月未发布改动的工作树。主窗使用配置中的默认 1360×860 和最小 960×640。两组使用同一份 3 项目、42 任务的合成夹具。浏览器截图的设备像素比为 1。</p>
+    <nav class="jump-links" aria-label="本页目录">
+      <a href="#reference">确认稿对照</a>
+      <a href="#findings">复现与建议</a>
+      <a href="#screens">当前截图</a>
+      <a href="#verification">已验证交互</a>
+      <a href="#decision">待确认</a>
+    </nav>
+  </header>
+
+  <section id="reference" class="source-compare" aria-labelledby="reference-title">
+    <h2 id="reference-title">确认稿与当前界面</h2>
+    <div class="pair">
+      <figure><a href="../../../qa/source-reference.png"><img src="../../../qa/source-reference.png" alt="确认稿包含左导航、项目分组任务和右侧详情，最右有交互说明"></a><figcaption>已确认的原始画板。右端标注栏只用于说明。</figcaption></figure>
+      <figure><a href="qa/03-detail-1360.jpg"><img src="qa/03-detail-1360.jpg" alt="1360×860 实际界面，项目分组列表中的长标题任务已打开详情"></a><figcaption>当前运行界面。使用项目分组并打开长标题任务详情。</figcaption></figure>
+    </div>
+    <div class="data-table"><table>
+      <thead><tr><th scope="col">核对项</th><th scope="col">确认稿</th><th scope="col">实测对照</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">桌面结构</th><td>左导航、分组任务行、右详情。</td><td>项目模式可见分组。打开详情仍使用固定浮层，展开前后底下工作区宽度均为 760px。</td></tr>
+        <tr><th scope="row">任务选中态</th><td>淡蓝底加整行细蓝边框。</td><td>当前为淡蓝底加左侧蓝条。按原稿核对时可恢复整行内描边，验收键盘焦点仍能与选中态区分。</td></tr>
+        <tr><th scope="row">任务操作</th><td>参考项目、状态圆圈及右侧内容层级。</td><td>多选、置顶、时间排序和固定操作区按后续项目决策核对。原图中的「开始任务」与版本状态属历史标注。</td></tr>
+      </tbody>
+    </table></div>
+    <p class="meta">原稿为带标注的静态画板，内容、尺寸与当前夹具有差异。以上对照用于核对结构与视觉层级。下面各组当前截图使用一致内容和状态，可用来比较窗口尺寸的影响。<a href="qa/00-reference-comparison.jpg">打开并排取证</a></p>
+  </section>
+
+  <section id="findings" aria-labelledby="findings-title">
+    <h2 id="findings-title">复现与修改建议</h2>
+    <div class="data-table"><table>
+      <thead><tr><th scope="col">位置与证据</th><th scope="col">实际影响</th><th scope="col">建议及复验</th></tr></thead>
+      <tbody>
+        <tr>
+          <th scope="row">详情键盘焦点<br><a href="qa/03-detail-960.jpg">浮层位置</a> · <a href="qa/observations.json">焦点记录</a></th>
+          <td>960×640 下用 Enter 打开长标题行，焦点留在列表。连续按三次 Tab，焦点落在浮层遮挡的「取消桌面置顶」，可见区域没有焦点提示。</td>
+          <td>键盘打开详情后把焦点放到标题区，关闭后归还触发行。复验能循序到达详情操作，Tab 不中途落到被盖住的按钮，浮层外的滚轮仍滚动列表。</td>
+        </tr>
+        <tr>
+          <th scope="row">截止日排序<br><a href="qa/02-due-sort-960.jpg">全部</a> · <a href="qa/02-project-sort-960.jpg">单项目</a></th>
+          <td>38 行顺序与真实截止日一致。第 28 项按 11 月 10 日排，行内显示「11 月 8 日完成」。单项目页仍显示「跨项目排序」。</td>
+          <td>截止日模式让已完成行同时可见截止日和完成日。单项目页改为与当前范围一致的提示。复验升降序、未知值置后及两种日期的读法，继续保留已完成标签。</td>
+        </tr>
+        <tr>
+          <th scope="row">看板卡片密度<br><a href="qa/07-board-960.jpg">960×640 看板</a></th>
+          <td>同一长标题从宽屏 5 行增至窄屏 9 行，首卡达 279px，占该列 392px 可见任务区约 71%。右端还有 36px 可横滚，静止时提示弱。</td>
+          <td>窄屏卡片标题收至三行，仍可通过详情读取全文。实际有横向溢出时提示剩余列。复验相同夹具下同列至少可扫读两张卡的标题，拖放和状态选择不受影响。</td>
+        </tr>
+        <tr>
+          <th scope="row">详情首屏阅读<br><a href="qa/03-detail-1360.jpg">宽窗</a> · <a href="qa/03-detail-960.jpg">窄窗</a></th>
+          <td>窄窗中长标签占 183px，描述标题距固定页脚仅 12px，首屏看不到描述正文。代码标识与中文均能折行，详情无横向溢出。</td>
+          <td>建议把状态、优先级、项目留在头部，描述移到长标签之前。标签继续可阅读全文。复验 960×640 打开同任务能直接见描述首句，四个标题动作及页脚位置稳定。</td>
+        </tr>
+        <tr>
+          <th scope="row">客户端切换<br><a href="qa/10-integration-960.jpg">客户端页</a> · <a href="qa/10-integration-manual-960.jpg">手动路径</a></th>
+          <td>在 Codex 标签按右方向键，选中项仍是 Codex。点 Claude Code 可切换，返回后保留自己的路径草稿。</td>
+          <td>让方向键在客户端标签间移动并显示焦点。复验切换前后的草稿、确认撤销和可用操作仍归属于所选客户端。</td>
+        </tr>
+        <tr>
+          <th scope="row">便签长标题<br><a href="qa/11-sticky-320.jpg">最小便签</a></th>
+          <td>320px 宽时首条标题文字需要 744px，现有列宽 198px，尾部省略，标题元素也没有全文提示。前缀相同的任务难以区分。</td>
+          <td>保留单行密度，给焦点与悬停提供完整标题。复验仍可访问完成、取消置顶和底部打开任务台。</td>
+        </tr>
+      </tbody>
+    </table></div>
+    <p>设置在窄窗可滚动到诊断区。可把「网页预览不访问桌面更新源」放在「检查更新」旁，让禁用原因就地可见。编辑器能在日期字段下显示错误并阻止保存，当前没有需要优先修改的表单遮挡问题。</p>
+  </section>
+
+  <section id="screens" aria-labelledby="screens-title">
+    <h2 id="screens-title">当前截图</h2>
+    <p class="meta">点击图片查看原尺寸。每组以同一视图、筛选状态和合成任务比较。</p>
+    <div class="figure-group">
+      <h3>1. 导航、项目分组与任务列表</h3>
+      <div class="pair">
+        <figure><a href="qa/01-list-1360.jpg"><img loading="lazy" src="qa/01-list-1360.jpg" alt="1360×860，按项目分组的全部任务"></a><figcaption>1360×860 · 全部 / 按项目分组</figcaption></figure>
+        <figure><a href="qa/01-list-960.jpg"><img loading="lazy" src="qa/01-list-960.jpg" alt="960×640，同一按项目分组任务列表"></a><figcaption>960×640 · 同一分组与顺序</figcaption></figure>
+      </div>
+      <p><a href="qa/02-due-sort-960.jpg">截止日升序</a> · <a href="qa/08-search-empty-960.jpg">项目内搜索无结果</a></p>
+    </div>
+    <div class="figure-group">
+      <h3>2. 四列看板</h3>
+      <div class="pair">
+        <figure><a href="qa/07-board-1360.jpg"><img loading="lazy" src="qa/07-board-1360.jpg" alt="1360×860，四列看板及待开始首张长标题卡片"></a><figcaption>1360×860 · 四列完整可见</figcaption></figure>
+        <figure><a href="qa/07-board-960.jpg"><img loading="lazy" src="qa/07-board-960.jpg" alt="960×640，看板长标题换行并压缩同列任务可见区"></a><figcaption>960×640 · 首卡与右端列对照</figcaption></figure>
+      </div>
+    </div>
+    <div class="figure-group">
+      <h3>3. 固定任务详情</h3>
+      <div class="pair">
+        <figure><a href="qa/03-detail-1360.jpg"><img loading="lazy" src="qa/03-detail-1360.jpg" alt="1360×860，长标签及描述在任务详情中换行"></a><figcaption>1360×860 · 同一长文本任务</figcaption></figure>
+        <figure><a href="qa/03-detail-960.jpg"><img loading="lazy" src="qa/03-detail-960.jpg" alt="960×640，长标签使描述正文落到首屏下方"></a><figcaption>960×640 · 固定标题操作与页脚</figcaption></figure>
+      </div>
+      <p><a href="qa/03-detail-expanded-960.jpg">展开详情</a> · <a href="qa/04-image-viewer-960.jpg">查看第 2 张图片</a></p>
+    </div>
+    <div class="figure-group">
+      <h3>4. 任务编辑器</h3>
+      <div class="pair">
+        <figure><a href="qa/05-editor-1360.jpg"><img loading="lazy" src="qa/05-editor-1360.jpg" alt="1360×860，编辑长任务的表单"></a><figcaption>1360×860 · 编辑同一任务</figcaption></figure>
+        <figure><a href="qa/05-editor-960.jpg"><img loading="lazy" src="qa/05-editor-960.jpg" alt="960×640，编辑表单的保存操作仍在固定页脚"></a><figcaption>960×640 · 表单独立滚动</figcaption></figure>
+      </div>
+      <p><a href="qa/06-editor-invalid-date-960.jpg">非法日期的字段反馈</a></p>
+    </div>
+    <div class="figure-group">
+      <h3>5. 设置</h3>
+      <div class="pair">
+        <figure><a href="qa/09-settings-1360.jpg"><img loading="lazy" src="qa/09-settings-1360.jpg" alt="1360×860，设置页面及其数据、更新、诊断分区"></a><figcaption>1360×860 · 设置概览</figcaption></figure>
+        <figure><a href="qa/09-settings-960.jpg"><img loading="lazy" src="qa/09-settings-960.jpg" alt="960×640，设置、禁用的网页更新按钮及其说明"></a><figcaption>960×640 · 设置概览</figcaption></figure>
+      </div>
+      <p><a href="qa/09-settings-bottom-960.jpg">键盘滚动后的诊断区</a></p>
+    </div>
+    <div class="figure-group">
+      <h3>6. 连接与权限</h3>
+      <div class="pair">
+        <figure><a href="qa/10-integration-1360.jpg"><img loading="lazy" src="qa/10-integration-1360.jpg" alt="1360×860，连接页面下选中的 Codex 配置状态"></a><figcaption>1360×860 · Codex 配置状态</figcaption></figure>
+        <figure><a href="qa/10-integration-960.jpg"><img loading="lazy" src="qa/10-integration-960.jpg" alt="960×640，连接页面下选中的 Codex 配置状态"></a><figcaption>960×640 · 同一客户端</figcaption></figure>
+      </div>
+      <p><a href="qa/10-integration-manual-960.jpg">滚动到手动路径与写入状态</a></p>
+    </div>
+    <div class="figure-group">
+      <h3>7. 桌面便签</h3>
+      <div class="pair">
+        <figure class="compact"><a href="qa/11-sticky-360.jpg"><img loading="lazy" src="qa/11-sticky-360.jpg" alt="默认大小的便签浏览器预览，显示三条置顶合成任务"></a><figcaption>360×330 · 默认便签尺寸</figcaption></figure>
+        <figure class="compact"><a href="qa/11-sticky-320.jpg"><img loading="lazy" src="qa/11-sticky-320.jpg" alt="最小尺寸的便签浏览器预览，长标题以省略号显示"></a><figcaption>320×220 · 最小便签尺寸</figcaption></figure>
+      </div>
+      <p><a href="qa/11-sticky-guard-320.jpg">未满足验收标准时的完成反馈</a></p>
+    </div>
+  </section>
+
+  <section id="verification" aria-labelledby="verification-title">
+    <h2 id="verification-title">本轮可复现的交互</h2>
+    <ul>
+      <li>截止日排序覆盖 38 个未归档任务，时间模式隐藏拖动柄。单项目搜索选中匹配的 6 条，改为无结果后清空选择。手动模式按方向键交换同项目可见行并恢复。</li>
+      <li>看板第一列独立滚动至 640px，另三列为 0。键盘横滚至 36px。鼠标把短标题卡从进行中拖到阻塞，键盘状态选择改回进行中。</li>
+      <li>详情打开时，左区滚轮将列表从 0 滚到 640px，详情仍在 0。点外部区域关闭详情且没有选中底下任务。展开后底下列表宽度仍为 760px。大图中按右方向键切到 2/3，Escape 返回详情。</li>
+      <li>编辑器输入 <code>2026-02-30</code> 后标出无效日期，保存时保留编辑器。最小便签的任务区可滚动到底，固定页脚可达。尝试完成带未确认验收标准的任务时出现提示。</li>
+      <li>设置可滚动到诊断区。连接页在窄窗展开手动路径后可滚到操作区，分客户端草稿保留。网页预览的更新检查与配置操作处于禁用状态。</li>
+    </ul>
+    <p class="meta">主窗口及便签浏览器预览无控制台错误，截图中的页面宽度均等于视口。原生便签拖动、置顶及窗口合成，生产更新和实际客户端配置写入属于桌面验收范围。</p>
+    <p>复现可在本工作树用 <code>npm.cmd run dev -- --host 127.0.0.1 --port 5327 --strictPort</code> 启动隔离预览，通过设置导入合成夹具。便签可在同一预览使用 <code>/?mode=sticky</code>。<a href="../../../qa/review-2026-11-12/synthetic-browser-fixture.json">合成夹具</a> · <a href="qa/observations.json">测量与交互记录</a></p>
+  </section>
+
+  <section id="decision" aria-labelledby="decision-title">
+    <h2 id="decision-title">待选定的改动</h2>
+    <p>建议先确认详情键盘焦点和截止日可见性。看板的标题截取、详情信息顺序、便签全文提示和客户端标签键盘行为列为下一批候选。已确认稿的任务选中边框有独立对照。</p>
+    <p>本版为复查记录。选定改动后保存相应视觉或交互稿，再用同一夹具、视口和状态进行实现对照。</p>
+  </section>
+</main>
+</body>
+</html>

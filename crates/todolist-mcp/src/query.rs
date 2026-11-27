@@ -444,7 +444,7 @@ pub fn select<'a>(
     Ok(hits)
 }
 pub fn compact(task: &Task) -> Value {
-    json!({"id":task.id,"title":task.title,"projectId":task.project_id,"status":task.status,"priority":task.priority,"version":task.version,"dueDate":task.due_date,"completedAt":task.completed_at,"archived":task.archived,
+    json!({"id":task.id,"title":task.title,"projectId":task.project_id,"status":task.status,"priority":task.priority,"version":task.version,"dueDate":task.due_date,"completedAt":task.completed_at,"createdAt":task.created_at,"updatedAt":task.updated_at,"archived":task.archived,
         "counts":{"subtasks":task.subtasks.len(),"subtasksCompleted":task.subtasks.iter().filter(|s|s.completed).count(),"acceptanceCriteria":task.acceptance_criteria.len(),"criteriaConfirmed":task.acceptance_criteria.iter().filter(|s|s.completed).count(),"attachments":task.attachments.len(),"images":task.images.len()}})
 }
 pub fn stats(workspace: &Workspace, filter: &Filter, today: Option<&str>) -> Result<Value, String> {

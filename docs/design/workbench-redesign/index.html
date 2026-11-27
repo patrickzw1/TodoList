@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TodoList 项目列表与详情重设计</title>
+  <link rel="stylesheet" href="../design.css">
+  <style>
+    .candidates { gap: 22px; }
+    .candidates figure a { display: block; }
+    .candidates figcaption { color: inherit; font-size: .94rem; }
+    .candidates figcaption h3 { margin-top: 12px; font-size: 1.12rem; }
+    .state-figure { max-width: 900px; }
+    .outline-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .outline-grid img { aspect-ratio: 3 / 2; object-fit: contain; filter: grayscale(1); }
+    details { margin-top: 16px; }
+    summary { cursor: pointer; font-weight: 600; }
+    pre {
+      padding: 12px 14px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: white;
+    }
+    @media (max-width: 700px) { .outline-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="meta"><a href="../index.html">TodoList 设计索引</a> · 2026-11-27</p>
+    <h1>项目列表与任务详情重设计</h1>
+    <p>同为 1536 × 1024 的「官网体验改版」项目。七条任务采用相同的手动顺序，打开同一条进行中、已置顶的长标题任务。点击图稿可查看原尺寸。</p>
+    <p class="callout">11 月 27 日已选快速扫读方向，以用户附图为实现基准。状态和优先级可在详情中直接修改。<a href="images/approved-2026-11-27.png">打开确认附图</a> · <a href="verify/index.html">打开实际实现对照</a></p>
+    <nav class="jump-links" aria-label="页内导航">
+      <a href="#candidates">两稿对照</a>
+      <a href="#description">长描述折叠</a>
+      <a href="#acceptance">操作与验收</a>
+      <a href="#history">来源与旧稿</a>
+    </nav>
+  </header>
+
+  <section aria-labelledby="candidates">
+    <h2 id="candidates">候选图稿</h2>
+    <div class="pair candidates">
+      <figure>
+        <a href="images/a-fast-scan-v03.png">
+          <img src="images/a-fast-scan-v03.png" width="1536" height="1024"
+               alt="A 快速扫读原图。蓝灰一体导航、日期对齐的紧凑列表及右侧详情，描述处于收起态。">
+        </a>
+        <figcaption>
+          <h3>A · 快速扫读 <span class="meta">v0.3</span></h3>
+          <p>导航集中在同一个栏内，任务状态和日期沿列对齐。选中行用靠左的蓝线标记，较窄的详情给列表留出更多横向空间。</p>
+          <p class="meta">适合翻看较长队列。长标题在窄详情里占用更多行。</p>
+        </figcaption>
+      </figure>
+      <figure>
+        <a href="images/b-today-focus-v02.png">
+          <img src="images/b-today-focus-v02.png" width="1536" height="1024"
+               alt="B 今日专注原图。独立的操作栏和项目栏、带日期和今日到期数的项目标题、更宽的右侧详情。">
+        </a>
+        <figcaption>
+          <h3>B · 今日专注 <span class="meta">v0.2</span></h3>
+          <p>常用入口和项目分栏，日期与今日到期数放在项目标题下。每行留出两层信息，选中行有浅蓝色描边，详情标题与正文有更长的行宽。</p>
+          <p class="meta">适合打开项目后安排当天工作、集中读一条任务。同屏展示的列表信息较少。</p>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="description">
+    <h2 id="description">长描述折叠</h2>
+    <figure class="state-figure">
+      <a href="images/description-fold-states-v02.png">
+        <img src="images/description-fold-states-v02.png" width="1536" height="1024" loading="lazy"
+             alt="同宽度的详情对照。左侧四行收起，附件与子任务紧接描述。右侧显示换行后的完整路径与两段正文。下方短描述直接显示。">
+      </a>
+      <figcaption>默认收起、原地展开及短描述 · 局部对照 v0.2</figcaption>
+    </figure>
+    <ul>
+      <li>按面板当前宽度显示前四个实际排版行。原有换行保留，长路径可以换行，实际超过四行才出现「展开全文」。</li>
+      <li>点击后原地显示全文，「收起」回到四行。收起时附件与子任务随正文上移，短描述自然显示。</li>
+      <li>切换任务时回到默认状态。同一任务在后台刷新时保留阅读状态，窄面板和全宽详情都按各自宽度重算是否溢出。</li>
+      <li>编辑器可编辑全文。数据库和 MCP 继续保留原文。</li>
+    </ul>
+    <details>
+      <summary>查看样例原文</summary>
+      <pre>逐项核对桌面与手机端截图。
+补充异常状态和复现步骤。
+证据保存路径：
+D:\QA\WebsiteLaunch\2026-11-27\DesktopAndMobile\FinalEvidence\HomepageReview
+
+核对发布清单，记录需补拍的场景。
+确认交付记录后再归档。</pre>
+      <p>短描述样例「核对首页文案。」</p>
+    </details>
+  </section>
+
+  <section aria-labelledby="acceptance">
+    <h2 id="acceptance">操作与验收</h2>
+    <p>实现按确认附图延展看板、编辑器、桌面便签和设置。候选稿 B 的日期栏保留作历史对照。</p>
+    <div class="data-table">
+      <table>
+        <thead><tr><th scope="col">场景</th><th scope="col">选稿后的实现核对</th></tr></thead>
+        <tbody>
+          <tr>
+            <th scope="row">打开详情</th>
+            <td>右侧固定覆盖，工作区宽度不变。外露列表仍可滚动，点外侧关闭详情时底下的动作不会触发。</td>
+          </tr>
+          <tr>
+            <th scope="row">标题、标签和日期</th>
+            <td>窄窗长标题可换行，展开、置顶、编辑和关闭可达。多标签不溢出。进行中显示截止日期，完成行显示完成日期。</td>
+          </tr>
+          <tr>
+            <th scope="row">长短描述</th>
+            <td>在常用与较窄视口下核对默认宽度和全宽详情，覆盖四行、恰好溢出、展开、收起、切换任务和同任务刷新。比较收起前后的附件与子任务位置。</td>
+          </tr>
+          <tr>
+            <th scope="row">任务操作</th>
+            <td>列表多选和完成独立。头部与底部固定，各动作可达。未确认的验收项继续阻止完成，附件可从详情打开。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta"><a href="verify/index.html">实现后的截图与实测记录</a> · <a href="../workbench-review/index.html">改版前复查</a></p>
+  </section>
+
+  <section aria-labelledby="history">
+    <h2 id="history">来源与旧稿</h2>
+    <ul>
+      <li>用状态、标题和日期的列对齐提高清单扫读速度，工具放在列表上方。<a href="https://linear.app/docs/my-issues">Linear · My Issues</a> · <a href="https://linear.app/docs/display-options">Display options</a></li>
+      <li>用日期建立当天的上下文，给正在读的任务留出空间。<a href="https://culturedcode.com/things/features/#today-and-this-evening">Things · Today and This Evening</a></li>
+    </ul>
+    <details id="outline">
+      <summary>轮廓对照</summary>
+      <div class="outline-grid">
+        <figure>
+          <a href="images/a-fast-scan-v03.png"><img src="images/a-fast-scan-v03.png" width="1536" height="1024" loading="lazy" alt="A 灰度构图"></a>
+          <figcaption>A · 一体导航、紧凑列表</figcaption>
+        </figure>
+        <figure>
+          <a href="images/b-today-focus-v02.png"><img src="images/b-today-focus-v02.png" width="1536" height="1024" loading="lazy" alt="B 灰度构图"></a>
+          <figcaption>B · 双栏导航、宽详情</figcaption>
+        </figure>
+        <figure>
+          <a href="../../../qa/source-reference.png"><img src="../../../qa/source-reference.png" loading="lazy" alt="历史原稿灰度构图，带侧边说明"></a>
+          <figcaption>历史原稿 · 含交互说明栏</figcaption>
+        </figure>
+      </div>
+    </details>
+    <details>
+      <summary>历次图稿与生成记录</summary>
+      <ul>
+        <li><a href="brief.md">设计简报和虚构任务清单</a> · <a href="prompts.md">出图提示词和版本</a></li>
+        <li>A <a href="archive/a-fast-scan-v01.png">v0.1 初稿</a> · <a href="archive/a-fast-scan-v02.png">v0.2 只读元数据</a></li>
+        <li>B <a href="archive/b-today-focus-v01.png">v0.1 初稿</a></li>
+        <li>局部对照 <a href="archive/description-fold-states-v01.png">v0.1</a></li>
+      </ul>
+    </details>
+  </section>
+</main>
+</body>
+</html>

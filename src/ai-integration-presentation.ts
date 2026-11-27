@@ -1,4 +1,4 @@
-export const aiClients = ["codex", "claude_code", "deepseek_harness"] as const;
+export const aiClients = ["codex", "claude_code", "deepseek_harness", "antigravity"] as const;
 export type AIClient = typeof aiClients[number];
 export type AIIntegrationState = "configured" | "conflict" | "partial" | "update_available" | "not_configured" | "development" | "client_missing" | "error";
 export interface AIIntegrationStatus {
@@ -25,7 +25,9 @@ export interface AIIntegrationStatus {
   reconnect: string;
 }
 export type IntegrationLocations = { configPath?: string; skillPath?: string };
-export const clientLabels: Record<AIClient, string> = { codex: "Codex", claude_code: "Claude Code (CC)", deepseek_harness: "DeepSeek Harness (DSH)" };
+export const clientLabels: Record<AIClient, string> = {
+  codex: "Codex", claude_code: "Claude Code (CC)", deepseek_harness: "DeepSeek Harness (DSH)", antigravity: "Google Antigravity",
+};
 export function integrationBadge(status: AIIntegrationStatus) {
   const badges = { configured: "配置已同步", conflict: "存在冲突", partial: "配置不完整", update_available: "可更新", not_configured: "未配置", development: "开发专用", client_missing: "未发现客户端", error: "读取失败" };
   return status.managedMigration ? "可迁移" : badges[status.state];

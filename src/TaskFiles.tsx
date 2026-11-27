@@ -1,7 +1,7 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowLeft, ArrowRight, File, FolderOpen, Image as ImageIcon, MagnifyingGlassMinus,
+  ArrowLeft, ArrowRight, ArrowSquareOut, File, FilePdf, FolderOpen, Image as ImageIcon, MagnifyingGlassMinus,
   MagnifyingGlassPlus, Plus, Trash, WarningCircle, X,
 } from "@phosphor-icons/react";
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -23,11 +23,6 @@ function readableBytes(size: number) {
 function fileNameParts(name: string) {
   const dot = name.lastIndexOf(".");
   return dot > 0 && dot < name.length - 1 ? { stem: name.slice(0, dot), extension: name.slice(dot) } : { stem: name, extension: "" };
-}
-
-function typeLabel(file: ManagedFile) {
-  const extension = fileNameParts(file.originalName).extension.slice(1).toUpperCase();
-  return extension || file.mediaType || "文件";
 }
 
 function browserFile(file: globalThis.File, data: string): ManagedFile {
@@ -237,22 +232,24 @@ export function TaskFileSections({ taskId, attachments, images, onAdd, onRemove 
 
   return <>
     <section className="detail-section file-section">
-      <header><h3>附件 <span>{attachments.length}</span></h3><button type="button" onClick={() => void importPaths("attachments")} disabled={importing !== null}><Plus />{importing === "attachments" ? "导入中…" : "添加附件"}</button></header>
+      <header><h3>附件 <span>{attachments.length}</span></h3>{attachments.length > 0 && <button className="file-add-icon" type="button" aria-label="添加附件" title="添加附件" onClick={() => void importPaths("attachments")} disabled={importing !== null}>{importing === "attachments" ? "导入中…" : <Plus />}</button>}</header>
       <input ref={attachmentInput} className="managed-file-input" type="file" multiple onChange={(event) => void importBrowser("attachments", event)} />
       {visibleAttachments.length ? <div className="attachment-list">{visibleAttachments.map((file) => {
         const name = fileNameParts(file.originalName);
+        const pdf = name.extension.toLowerCase() === ".pdf";
         return <div className={`attachment-row ${unavailable.has(file.id) ? "is-unavailable" : ""}`} key={file.id}>
-          <File weight="fill" />
-          <button type="button" className="attachment-name" title={file.originalName} onClick={() => void openAttachment(file)}><span className="attachment-file-name"><span className="attachment-stem">{name.stem}</span><b>{name.extension}</b></span><small>{unavailable.has(file.id) ? "文件不可用" : `${typeLabel(file)} · ${readableBytes(file.size)}`}</small></button>
+          <span className={`attachment-kind ${pdf ? "is-pdf" : ""}`}>{pdf ? <FilePdf /> : <File />}</span>
+          <button type="button" className="attachment-name" title={file.originalName} onClick={() => void openAttachment(file)}><span className="attachment-file-name"><span className="attachment-stem">{name.stem}</span><span>{name.extension}</span></span><small>{unavailable.has(file.id) ? "文件不可用" : readableBytes(file.size)}</small></button>
           <button type="button" className="attachment-action" aria-label={`在文件夹中显示 ${file.originalName}`} title="在文件夹中显示" onClick={(event) => { event.stopPropagation(); void revealAttachment(file); }}><FolderOpen /></button>
           <button type="button" className="attachment-action remove" aria-label={`移除 ${file.originalName}`} title="移除托管副本" onClick={() => onRemove("attachments", file.id)}><Trash /></button>
+          <button type="button" className="attachment-action attachment-open" aria-label={`打开附件 ${file.originalName}`} title="打开附件" onClick={() => void openAttachment(file)}><ArrowSquareOut /></button>
         </div>;
-      })}</div> : <button type="button" className="empty-file-add" onClick={() => void importPaths("attachments")}><Plus />添加第一个附件</button>}
+      })}</div> : <button type="button" className="empty-file-add" disabled={importing !== null} onClick={() => void importPaths("attachments")}><Plus />{importing === "attachments" ? "导入中…" : "添加附件"}</button>}
       {attachments.length > ATTACHMENT_PREVIEW_COUNT && <button type="button" className="show-all-files" onClick={() => setAttachmentsExpanded((value) => !value)}>{attachmentsExpanded ? "收起" : `查看全部（${attachments.length}）`}</button>}
       {message?.kind === "attachments" && <p className="file-message is-error"><WarningCircle />{message.text}</p>}
     </section>
-    <section className="detail-section file-section image-section">
-      <header><h3>图片 <span>{images.length}</span></h3><button type="button" onClick={() => void importPaths("images")} disabled={importing !== null}><Plus />{importing === "images" ? "导入中…" : "添加图片"}</button></header>
+    <section className={`detail-section file-section image-section ${images.length ? "" : "is-empty"}`} aria-label="图片">
+      {images.length > 0 && <header><h3>图片 <span>{images.length}</span></h3><button className="file-add-icon" type="button" aria-label="添加图片" title="添加图片" onClick={() => void importPaths("images")} disabled={importing !== null}>{importing === "images" ? "导入中…" : <Plus />}</button></header>}
       <input ref={imageInput} className="managed-file-input" type="file" accept="image/*" multiple onChange={(event) => void importBrowser("images", event)} />
       {images.length ? <div className={`image-gallery ${images.length === 1 ? "is-single" : ""}`}>
         {images.length > 1 && <button type="button" className="image-step" aria-label="上一张图片" disabled={imageIndex === 0} onClick={() => setImageIndex((value) => value - 1)}><ArrowLeft /></button>}
@@ -262,7 +259,7 @@ export function TaskFileSections({ taskId, attachments, images, onAdd, onRemove 
         })}</div>
         {images.length > 1 && <button type="button" className="image-step" aria-label="下一张图片" disabled={imageIndex === images.length - 1} onClick={() => setImageIndex((value) => value + 1)}><ArrowRight /></button>}
         <div className="image-gallery-meta"><span>{imageIndex + 1}/{images.length}</span><button type="button" onClick={() => onRemove("images", images[imageIndex].id)}><Trash />移除当前图片</button></div>
-      </div> : <button type="button" className="empty-file-add" onClick={() => void importPaths("images")}><ImageIcon /><span>添加第一张图片</span></button>}
+      </div> : <button type="button" className="empty-file-add" disabled={importing !== null} onClick={() => void importPaths("images")}><ImageIcon />{importing === "images" ? "导入中…" : "添加图片"}</button>}
       {message?.kind === "images" && <p className="file-message is-error"><WarningCircle />{message.text}</p>}
     </section>
     {viewerOpen && images.length > 0 && <ImageViewer files={images} index={imageIndex} onIndex={setImageIndex} onClose={closeViewer} />}

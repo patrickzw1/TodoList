@@ -42,6 +42,22 @@ export function completionDateTime(value: string) {
   return `${completionDate(value)} ${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`;
 }
 
+const creationActions = new Set(["创建任务", "Codex 创建任务", "Claude Code 创建任务", "DeepSeek Harness 创建任务", "AI 创建任务"]);
+const mutationActions = new Set([...creationActions, ...harmlessLegacyActions, ...completionActions,
+  "编辑任务", "重新打开任务", "取消验收并重新打开任务", "状态更新为待开始", "状态更新为进行中", "状态更新为已阻塞",
+  "Codex 更新任务", "Claude Code 更新任务", "DeepSeek Harness 更新任务", "AI 更新任务",
+  ...["Codex", "Claude Code", "DeepSeek Harness", "AI"].flatMap((client) =>
+    ["添加附件", "添加图片", "移除托管文件关联"].map((action) => `${client} ${action}`)),
+]);
+
+export function taskAuditTimes(task: Pick<Task, "createdAt" | "updatedAt" | "activity">) {
+  const valid = (value?: string | null) => value && isCompletionTimestamp(value) ? value : null;
+  const creation = task.activity.find((item) => creationActions.has(item.action) && valid(item.at));
+  const latest = task.activity.at(-1);
+  return { createdAt: task.createdAt !== undefined ? valid(task.createdAt) : creation?.at ?? null,
+    updatedAt: task.updatedAt !== undefined ? valid(task.updatedAt) : (latest && mutationActions.has(latest.action) ? valid(latest.at) : null) };
+}
+
 export function taskDateLabel(task: Task, today = new Date()) {
   if (task.status === "done") {
     const time = completionTime(task);
@@ -62,6 +78,7 @@ export function activityItemsForDetail(items: ActivityItem[], expanded: boolean)
 }
 
 export function taskWithUserActivity(task: Task, action: string, patch: Partial<Task>, now = new Date()): Task {
+  if (Object.entries(patch).every(([key, value]) => JSON.stringify(task[key as keyof Task]) === JSON.stringify(value))) return task;
   const nextStatus = patch.status ?? task.status;
   const completedAt = nextStatus !== "done" ? null
     : task.status === "done" ? completionTime(task) : now.toISOString();
@@ -69,6 +86,8 @@ export function taskWithUserActivity(task: Task, action: string, patch: Partial<
   return {
     ...task,
     ...patch,
+    createdAt: taskAuditTimes(task).createdAt,
+    updatedAt: now.toISOString(),
     completedAt,
     version: task.version + 1,
     activity: boundedActivity([

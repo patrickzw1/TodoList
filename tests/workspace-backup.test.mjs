@@ -100,3 +100,19 @@ test("restore rebases every task beyond current and imported versions without mu
   assert.equal(imported.tasks[0].version, 2);
   assert.throws(() => importedWorkspaceForSave(imported, { ...current, version: Number.MAX_SAFE_INTEGER }), /安全上限/);
 });
+
+
+test("backup retains audit timestamps without dating undated legacy tasks on restore", () => {
+  const fixture = workspace();
+  fixture.tasks[0].createdAt = "2026-11-01T10:00:00+08:00";
+  fixture.tasks[0].updatedAt = "2026-11-12T00:00:00Z";
+  const parsed = parseWorkspaceBackup(JSON.stringify(createWorkspaceBackup(fixture)));
+  const restored = importedWorkspaceForSave(parsed.workspace, workspace());
+  assert.equal(restored.tasks[0].createdAt, fixture.tasks[0].createdAt);
+  assert.equal(restored.tasks[0].updatedAt, fixture.tasks[0].updatedAt);
+  delete fixture.tasks[0].createdAt; delete fixture.tasks[0].updatedAt;
+  const legacy = parseWorkspaceBackup(JSON.stringify(createWorkspaceBackup(fixture))).workspace.tasks[0];
+  assert.equal(legacy.createdAt, null); assert.equal(legacy.updatedAt, null);
+  fixture.tasks[0].createdAt = "2026-11-12";
+  assert.throws(() => createWorkspaceBackup(fixture), /包含时区/);
+});

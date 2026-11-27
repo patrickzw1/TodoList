@@ -1,0 +1,316 @@
+{
+  "focus": {
+    "trail": [
+      [
+        "返回任务视图，项目 官网体验改版",
+        true
+      ],
+      [
+        "展开任务详情",
+        true
+      ],
+      [
+        "取消桌面置顶",
+        true
+      ],
+      [
+        "编辑任务",
+        true
+      ],
+      [
+        "关闭详情",
+        true
+      ]
+    ],
+    "returnTo": "verify-publish"
+  },
+  "collapsed960": {
+    "attachmentY": 501,
+    "expanded": "false",
+    "height": 96,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 216
+  },
+  "expanded960": {
+    "attachmentY": 564,
+    "expanded": "true",
+    "height": 216,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 216
+  },
+  "sameTaskRefresh": {
+    "attachmentY": 588,
+    "expanded": "true",
+    "height": 240,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 240
+  },
+  "collapsedAfterRefresh": {
+    "attachmentY": 444,
+    "expanded": "false",
+    "height": 96,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 240
+  },
+  "shortDescriptionControlCount": 0,
+  "shortTaskState": {
+    "focus": "",
+    "state": "detail-panel  ",
+    "title": "整理首屏文案与版式"
+  },
+  "shortCloseTarget": {
+    "active": [
+      "BODY",
+      null
+    ],
+    "hit": "关闭详情",
+    "rect": [
+      914,
+      7,
+      34,
+      34
+    ]
+  },
+  "widthSensitiveNarrow": 1,
+  "fullWidthFourLines": {
+    "height": 96,
+    "line": "24px",
+    "scrollHeight": 96,
+    "toggle": false,
+    "width": 959
+  },
+  "otherTaskResets": {
+    "attachmentY": 501,
+    "expanded": "false",
+    "height": 96,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 240
+  },
+  "directFields": [
+    "blocked",
+    "low"
+  ],
+  "guardedStatus": "blocked",
+  "acceptedCompletion": {
+    "completedAt": true,
+    "status": "done"
+  },
+  "directReopen": {
+    "completedAt": false,
+    "status": "in_progress"
+  },
+  "editorFullDescription": {
+    "keptExternalUpdate": true,
+    "keptParagraphs": true,
+    "keptPath": true,
+    "length": 151
+  },
+  "editorInvalidDate": {
+    "invalid": "true",
+    "saveEnabled": true
+  },
+  "dueAscending": {
+    "label": "截止日期",
+    "rows": [
+      {
+        "id": "verify-copy",
+        "sort": "11月27日"
+      },
+      {
+        "id": "verify-publish",
+        "sort": "11月27日"
+      },
+      {
+        "id": "verify-download",
+        "sort": "11月27日"
+      },
+      {
+        "completion": "11月26日完成",
+        "id": "verify-review",
+        "sort": "11月29日"
+      },
+      {
+        "id": "verify-faq",
+        "sort": "11月30日"
+      },
+      {
+        "id": "verify-feedback",
+        "sort": "12月1日"
+      },
+      {
+        "completion": "11月25日完成",
+        "id": "verify-navigation",
+        "sort": "12月2日"
+      }
+    ],
+    "dragHandles": 0
+  },
+  "dueDescendingFirst": {
+    "completion": "11月25日完成",
+    "id": "verify-navigation",
+    "sort": "12月2日"
+  },
+  "manualRestored": true,
+  "manualKeyboardMoved": [
+    "verify-publish",
+    "verify-copy",
+    "verify-download"
+  ],
+  "boardAfterDrag": "blocked",
+  "antigravityTab": {
+    "active": "client-tab-antigravity",
+    "disabledWrite": true,
+    "paths": [
+      "~/.gemini/config/mcp_config.json",
+      "~/.gemini/config/skills/todolist-mcpSKILL.md",
+      "TodoList 安装目录/todolist-mcp"
+    ],
+    "selected": "client-tab-antigravity",
+    "states": "MCP 注册 未注册Skill 文件 未安装运行连接 未验证"
+  },
+  "note360": {
+    "pan": 0,
+    "pinTitle": "核对新版中文首页发布清单并补齐移动端和桌面端验收证据",
+    "size": [
+      360,
+      330
+    ]
+  },
+  "exposedScroll": {
+    "beforeWidth": 760,
+    "bodyHorizontalOverflow": 0,
+    "open": true,
+    "openWidth": 760,
+    "scrollTop": 0
+  },
+  "outsideClick": {
+    "selection": 0,
+    "position": 259
+  },
+  "boardColumnScroll": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "boardColumnScrollAfterWheel": [
+    [
+      331,
+      331
+    ],
+    [
+      0,
+      121
+    ],
+    [
+      0,
+      184
+    ],
+    [
+      0,
+      121
+    ]
+  ],
+  "longBoardIndependentScroll": [
+    1308,
+    0,
+    0,
+    0
+  ],
+  "browserErrors": [],
+  "comparison1536": {
+    "description": [
+      977,
+      308,
+      538,
+      114
+    ],
+    "detail": [
+      951,
+      0,
+      585,
+      1024
+    ],
+    "detailOverflow": 0,
+    "dpr": 1,
+    "footer": [
+      952,
+      947,
+      584,
+      77
+    ],
+    "selectedRow": [
+      256,
+      278,
+      1280,
+      77
+    ],
+    "sidebar": [
+      0,
+      0,
+      256,
+      1024
+    ],
+    "tableHeader": [
+      256,
+      156,
+      1280,
+      50
+    ],
+    "tagRows": 1,
+    "titlebar": [
+      256,
+      0,
+      1280,
+      71
+    ],
+    "toolbar": [
+      256,
+      71,
+      1280,
+      85
+    ],
+    "viewport": [
+      1536,
+      1024
+    ]
+  },
+  "finalCollapsed960": {
+    "attachmentY": 501,
+    "expanded": "false",
+    "height": 96,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 216
+  },
+  "finalExpanded960": {
+    "attachmentY": 564,
+    "expanded": "true",
+    "height": 216,
+    "line": "24px",
+    "panelOverflow": 0,
+    "scrollHeight": 216
+  },
+  "focusWrap": "返回任务视图，项目 官网体验改版",
+  "invalidSubmitBlocked": {
+    "visible": true,
+    "invalid": "true"
+  },
+  "comparisonAssets": [
+    [
+      1536,
+      1024
+    ],
+    [
+      1536,
+      1024
+    ]
+  ],
+  "comparisonSlider": "51%",
+  "browserErrorsFinal": []
+}

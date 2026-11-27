@@ -310,6 +310,8 @@ mod tests {
                 description: String::new(),
                 status: TaskStatus::Todo,
                 completed_at: None,
+                created_at: None,
+                updated_at: None,
                 priority: Priority::Medium,
                 due_label: "未安排".into(),
                 due_date: "9999-12-31".into(),

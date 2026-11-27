@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TodoList 界面验收样例</title>
+  <link rel="stylesheet" href="../../design.css">
+</head>
+<body>
+<main class="reading">
+  <h1>界面验收样例</h1>
+  <p>此页仅在本机开发预览的 5359 端口写入虚构浏览器数据。载入后选择「官网体验改版」，再打开第二条任务。</p>
+  <p>
+    <button type="button" id="reference">载入附图内容</button>
+    <button type="button" id="long">载入长描述</button>
+    <button type="button" id="stress">载入长队列</button>
+  </p>
+  <p><button type="button" id="refresh">模拟同一任务的外部刷新</button></p>
+  <p id="result" role="status"></p>
+  <script type="module">
+    const controls = [...document.querySelectorAll("button")];
+    const result = document.getElementById("result");
+    if (!import.meta.env.DEV || location.origin !== "http://127.0.0.1:5359") {
+      controls.forEach((control) => { control.disabled = true; });
+      result.textContent = "请通过指定的本机开发预览打开验收页。";
+    } else {
+      const storageKey = "todolist-workspace-v1";
+      const projectId = "verify-website";
+      const selectedId = "verify-publish";
+      const description = [
+        "逐项核对桌面与手机端截图。",
+        "补充异常状态和复现步骤。",
+        "证据保存路径：",
+        String.raw`D:\QA\WebsiteLaunch\2026-11-27\DesktopAndMobile\FinalEvidence\HomepageReview`,
+        "",
+        "核对发布清单，记录需补拍的场景。",
+        "确认交付记录后再归档。",
+      ].join("\n");
+      const project = [
+        { id: projectId, name: "官网体验改版", color: "#0854E4" },
+        { id: "verify-content", name: "内容运营", color: "#253347" },
+        { id: "verify-design", name: "设计素材", color: "#253347" },
+      ];
+      const task = (id, title, dueDate, extra = {}) => ({
+        id, projectId, title, dueDate, dueLabel: "", description: "", status: "todo", priority: "medium",
+        tags: [], source: "手动创建", archived: false, pinned: false, version: 1, subtasks: [],
+        acceptanceCriteria: [], attachments: [], images: [], dependencies: [], activity: [], ...extra,
+      });
+      const load = (wideDescription) => {
+        const tasks = [
+          task("verify-copy", "整理首屏文案与版式", "2026-11-27", { description: "核对首页文案。" }),
+          task(selectedId, "核对新版中文首页发布清单并补齐移动端和桌面端验收证据", "2026-11-27", {
+            description: wideDescription ? description : "逐项核对桌面与手机端截图，补充流程和异常状态证据。",
+            status: "in_progress", priority: "high", pinned: true,
+            tags: ["发布", "跨端验收", "中文长文案", "视觉回归", "兼容性与无障碍"],
+            attachments: [{ id: "verify-pdf", originalName: "发布核对表.pdf", size: 92 * 1024,
+              mediaType: "application/pdf", storageKey: "/crates/todolist-mcp/tests/fixtures/sample.pdf", addedAt: "2026-11-27T09:00:00+08:00" }],
+            subtasks: [{ id: "wide", title: "检查宽屏首屏", completed: true }, { id: "narrow", title: "录入窄屏截图", completed: false }],
+            acceptanceCriteria: [{ id: "screen", title: "截图与实际版本一致", completed: false }],
+          }),
+          task("verify-download", "验证下载页链接", "2026-11-27", { status: "blocked", description: [
+            "核对链接。", "清点资源。", "记录状态。",
+            String.raw`D:\QA\WebsiteLaunch\2026-11-27\DesktopAssets\Index\UnbrokenFilename`,
+          ].join("\n") }),
+          task("verify-faq", "更新常见问题和截图", "2026-11-30"),
+          task("verify-feedback", "整理移动端反馈", "2026-12-01"),
+          task("verify-review", "归集上次走查记录", "2026-11-29", { status: "done", completedAt: "2026-11-26T12:00:00+08:00" }),
+          task("verify-navigation", "确认导航和按钮文字", "2026-12-02", { status: "done", completedAt: "2026-11-25T12:00:00+08:00" }),
+          task("verify-other", "核对内容清单", "2026-11-28", { projectId: "verify-content" }),
+        ];
+        openWorkspace({ version: 1, projects: project, tasks });
+      };
+      function openWorkspace(workspace) {
+        localStorage.setItem(storageKey, JSON.stringify(workspace));
+        localStorage.removeItem("todolist-list-sort");
+        location.assign("/");
+      }
+      document.getElementById("reference").onclick = () => load(false);
+      document.getElementById("long").onclick = () => load(true);
+      document.getElementById("stress").onclick = async () => {
+        const response = await fetch("/qa/review-2026-11-12/synthetic-browser-fixture.json");
+        if (!response.ok) { result.textContent = "无法读取长队列样例。"; return; }
+        openWorkspace((await response.json()).workspace);
+      };
+      document.getElementById("refresh").onclick = () => {
+        const workspace = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+        const selected = workspace?.tasks.find(({ id }) => id === selectedId);
+        if (!selected) { result.textContent = "请先载入附图或长描述样例。"; return; }
+        selected.description += "\n后台同步附加说明。";
+        ++selected.version;
+        ++workspace.version;
+        localStorage.setItem(storageKey, JSON.stringify(workspace));
+        result.textContent = "同一任务已刷新。";
+      };
+    }
+  </script>
+</main>
+</body>
+</html>

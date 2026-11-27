@@ -8,6 +8,7 @@ import {
   createSoftwareUpdateManager, UPDATE_CHECK_INTERVAL_MS, type ManagedSoftwareUpdate,
   type SoftwareUpdateManager, type SoftwareUpdateRuntime, type SoftwareUpdateSnapshot,
   type UpdateDownloadEvent,
+  type UpdateCheckStatus,
 } from "./software-update-manager";
 
 function managedUpdate(update: Update): ManagedSoftwareUpdate {
@@ -26,9 +27,9 @@ function createRuntime(): SoftwareUpdateRuntime {
     buildVersion: __APP_VERSION__,
     ...(desktop ? {
       getCurrentVersion: getVersion,
-      check: async () => {
-        const metadata = await invoke<ConstructorParameters<typeof Update>[0] | null>("check_stable_update");
-        return metadata ? managedUpdate(new Update(metadata)) : null;
+      check: async (automatic) => {
+        const result = await invoke<{ update: ConstructorParameters<typeof Update>[0] | null; status: UpdateCheckStatus; checked: boolean }>("check_stable_update", { automatic });
+        return { ...result, update: result.update ? managedUpdate(new Update(result.update)) : null };
       },
       getComponentStatus: () => invoke("component_build_status"),
       getRecovery: () => invoke("update_recovery_status"),
@@ -100,7 +101,19 @@ export function useSoftwareUpdate() {
 }
 
 export function SoftwareUpdateCard() {
-  const update = useSoftwareUpdate();
+  return <SoftwareUpdatePanel update={useSoftwareUpdate()} />;
+}
+
+export function SoftwareUpdatePanel({ update }: { update: SoftwareUpdateContextValue }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const until = update.checkBlockedUntil;
+    if (!until || until <= Date.now()) { setNow(Date.now()); return; }
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.min(until - Date.now() + 50, 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [update.checkBlockedUntil]);
+  const checkBlocked = (update.checkBlockedUntil ?? 0) > now;
+  const timeLabel = (time: number) => new Date(time).toLocaleString("zh-CN", { hour12: false });
   const busy = ["checking", "downloading", "downloaded", "installing"].includes(update.phase);
   const actionLabel = update.phase === "available"
     ? "下载并重启"
@@ -120,7 +133,7 @@ export function SoftwareUpdateCard() {
           <span>当前版本 {update.currentVersion}{update.availableVersion ? ` · 可用版本 ${update.availableVersion}` : ""} · 不允许降级安装</span>
         </div>
         <button
-          disabled={!update.desktop || busy}
+          disabled={!update.desktop || busy || (update.phase !== "available" && checkBlocked)}
           onClick={() => void (update.phase === "available" ? update.downloadAndInstall() : update.checkForUpdate())}
         >
           {update.phase === "available" ? <DownloadSimple /> : <ArrowClockwise />}
@@ -131,6 +144,12 @@ export function SoftwareUpdateCard() {
         {update.message}
         {update.progress !== null && update.phase === "downloading" && <progress max="100" value={update.progress} />}
       </div>
+      {update.desktop && <dl className="update-check-meta" aria-label="更新检查记录">
+        <div><dt>最近尝试</dt><dd>{update.lastAttemptAt ? timeLabel(update.lastAttemptAt) : "尚未检查"}</dd></div>
+        {update.lastCheckResult && <div><dt>上次结果</dt><dd>{update.lastCheckResult === "error" ? "检查失败" : update.lastCheckResult === "available" ? "发现新版本" : "当时已是最新版本"}</dd></div>}
+        {update.lastCheckedAt && <div><dt>最近成功</dt><dd>{timeLabel(update.lastCheckedAt)}</dd></div>}
+        {checkBlocked && update.checkBlockedUntil && <div><dt>{(update.retryAt ?? 0) >= update.checkBlockedUntil ? "限流重试时间" : "可再次检查"}</dt><dd><time dateTime={new Date(update.checkBlockedUntil).toISOString()}>{timeLabel(update.checkBlockedUntil)}</time></dd></div>}
+      </dl>}
       {update.componentStatus && <div className={`update-component-state ${update.componentStatus.matches ? "is-matched" : "is-error"}`}>
         {update.componentStatus.message}
       </div>}

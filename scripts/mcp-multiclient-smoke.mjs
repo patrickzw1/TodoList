@@ -57,6 +57,10 @@ async function initialize(client, protocolVersion) {
 try {
   const codex = start("codex"), cc = start("claude_code"), dsh = start("deepseek_harness"), generic = start();
   await Promise.all([initialize(codex, "2025-06-18"), initialize(cc, "2025-06-18"), initialize(dsh, "2026-07-28"), initialize(generic, "2025-06-18")]);
+  const projects = decoded(await generic.call("list_projects", {}));
+  assert.deepEqual(projects.projects.map((project) => project.id), ["p"]);
+  assert.equal(projects.workspaceVersion, fixture.version);
+  console.log("PASS: argument-free STDIO list_projects against the isolated fixture");
   const created = await Promise.all([codex, cc, dsh, generic].map(async (client) => {
     const input = { response: "full", project_id: "p", title: `${client.client ?? "generic"} task`, request_id: "same-request-id" };
     const task = decoded(await client.call("create_task", input)).task;
